@@ -6,14 +6,18 @@ from datetime import datetime
 import pickle
 
 
-''' This subfunction loads the data for each testing sample. 
+def load_data(battary_list, dir_path):
+    ''' 
+    This subfunction loads the data for each testing sample. 
+    
     Args:
         * battery_list: A list containing the batteries to be read.
         * dir_path: path of the dictionary.
+    
     Return:
         * battery: A list of dataframes, where each dataframe contains the test data from the batteries.
-'''
-def load_data(battary_list, dir_path):
+    '''
+    
     # Do a loop to read the excel files for each battery.
     battery = {}
     for name in battary_list:
@@ -83,14 +87,18 @@ def load_data(battary_list, dir_path):
     return battery
 
 
-''' This subfunction returns a sorted list of the test data, based on the testing date.
+def sort_file_names(path):
+    ''' 
+    This subfunction returns a sorted list of the test data, based on the testing date.
+
     Args:
         * path: A list containing the filenames of the data Tables.
                 The Table names have the format of 'CS2_35_XX_XX_XX.xlsx'
+    
     Return:
         * path_sorted: A list containing the sorted files.
-'''
-def sort_file_names(path):
+    '''
+    
     # Get the date of experiment for each excel file, and store in dates.
     dates = []
     # Loop for each excel in the path.
@@ -113,15 +121,19 @@ def sort_file_names(path):
     return path_sorted
 
 
-''' This subfunction extracts the charging phase from each cycle, and get the CCCT and CVCT.
-    Args:
-        * df_cycle: A dataframe containing the test data from a cycle.
-    Return:
-        * charge_capacity
-        * ccct: Constant current charging time
-        * cvct: Constant voltage charging time
-'''
 def extract_charging_phase(df_cycle):
+    ''' 
+    This subfunction extracts the charging phase from each cycle, and get the CCCT and CVCT.
+
+    Args:
+    * df_cycle: A dataframe containing the test data from a cycle.
+    
+    Return:
+    * charge_capacity
+    * ccct: Constant current charging time
+    * cvct: Constant voltage charging time
+    '''
+
     # Identify the charging phase:
     # Step_Index == 2 is the constant current, while == 4 is the constant voltage charging.
     df_c = df_cycle[(df_cycle['Step_Index'] == 2) | (df_cycle['Step_Index'] == 4)]
@@ -146,15 +158,19 @@ def extract_charging_phase(df_cycle):
     return charge_capacity, ccct, cvct
 
 
-''' This subfunction extracts the discharging phase from each cycle, and get the discharge capacity, internal resistance and health indicator.
-    Args:
-        * df_cycle: A dataframe containing the test data from a cycle.
-    Return:
-        * discharge_capacity
-        * internal_resistance
-        * health_indicator: Defined as the discharging capacity when the voltage drops from $3.8V$ to $3.4V$.
-'''
 def extract_discharge_phase(df_cycle):
+    ''' 
+    This subfunction extracts the discharging phase from each cycle, and get the discharge capacity, internal resistance and health indicator.
+    
+    Args:
+    * df_cycle: A dataframe containing the test data from a cycle.
+    
+    Return:
+    * discharge_capacity
+    * internal_resistance
+    * health_indicator: Defined as the discharging capacity when the voltage drops from $3.8V$ to $3.4V$.
+    '''
+    
     # Extract discharging phase.
     df_d = df_cycle[df_cycle['Step_Index'] == 7]
 
@@ -188,14 +204,18 @@ def extract_discharge_phase(df_cycle):
     return discharge_capacity, internal_resistance, health_indicator
 
 
-''' This subfunction calculates the capacity based on $Q(t) = \int_0^t I(t) dt.$
-    Args:
-        * d_t: The time.
-        * d_c: The correpsonding current.
-    Return: 
-        * capacity_cl: Calculated capacity.
-'''
 def cal_capacity(d_c, d_t):
+    ''' 
+    This subfunction calculates the capacity based on $Q(t) = \int_0^t I(t) dt.$
+    
+    Args:
+    * d_t: The time.
+    * d_c: The correpsonding current.
+    
+    Return: 
+    * capacity_cl: Calculated capacity.
+    '''
+
     time_diff = np.diff(list(d_t))
     d_c = np.array(list(d_c))[1:]
     capacity_cl = time_diff*d_c/3600 
@@ -204,14 +224,18 @@ def cal_capacity(d_c, d_t):
     return capacity_cl
 
 
-''' This subfunction remove the outliers based on the mean and std in a rolling window.
-    Args:
-        * df_data: The time series that needs to be detected.
-        * window: size of the rolling window.
-    Return:
-        * index: The index of the abnormal data points.
-'''
 def drop_outlier_rolling(df_data, window):
+    ''' 
+    This subfunction remove the outliers based on the mean and std in a rolling window.
+    
+    Args:
+    * df_data: The time series that needs to be detected.
+    * window: size of the rolling window.
+
+    Return:
+    * index: The index of the abnormal data points.
+    '''
+
     avg = df_data.rolling(window, closed='left').mean()
     std = df_data.rolling(window, closed='left').std()
     upper = avg + 3*std
@@ -221,14 +245,18 @@ def drop_outlier_rolling(df_data, window):
     return index
 
 
-''' This subfunction remove the outliers based on the mean and std in a sliding window.
-    Args:
-        * df_data: The time series that needs to be detected.
-        * window: size of the rolling window.
-    Return:
-        * index: The index of the normal data points.
-'''
 def drop_outlier_sw(data, window):
+    ''' 
+    This subfunction remove the outliers based on the mean and std in a sliding window.
+    
+    Args:
+    * df_data: The time series that needs to be detected.
+    * window: size of the rolling window.
+
+    Return:
+    * index: The index of the normal data points.
+    '''
+
     index = []
     range_ = np.arange(1, len(data), window)
     for i in range_[:-1]:
@@ -243,15 +271,18 @@ def drop_outlier_sw(data, window):
     return np.array(index)
 
 
-''' This subfunction calculate the true lifetime of a trajectory. The lifetime is defined as concecutively $n$ cycles below the threshold.
-    Args:
-        * cycle: The cycle number.
-        * data: The degradation trajectory.
-        * Threshold: Failure threshold.
-    Return:
-        * ttf: True lifetime.
-'''
 def cal_ttf(cycle, data, threshold):
+    ''' 
+    This subfunction calculate the true lifetime of a trajectory. The lifetime is defined as concecutively $n$ cycles below the threshold.
+    
+    Args:
+    * cycle: The cycle number.
+    * data: The degradation trajectory.
+    * Threshold: Failure threshold.
+
+    Return:
+    * ttf: True lifetime. '''
+
     # Define how many consecutive points needed.
     consecutive_values = 3
     length = len(data)
