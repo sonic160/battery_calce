@@ -178,7 +178,7 @@ if __name__ == '__main__':
 
     # PDF of process noise and noise generator function
     nu = 4  # size of the vector of process noise
-    sigma_u = 1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
+    sigma_u = 1*np.array([1e-4, 1e-6, 1e-5, 1e-5])
     # sigma_u = np.array([0, 0, 0, 0])
     def p_sys_noise(u):
         return norm.pdf(u, 0, sigma_u)
@@ -251,10 +251,10 @@ if __name__ == '__main__':
         yh[:, k] = obs(t[k], xh[:, k], 0)
 
     for k in range(T):
-        yReal[:, k] = obs(t[k], xh0, 0)
+        yReal[:, k] = obs(t[k], x[:, k], 0)
 
     # Plot the data
-    plt.plot(t, y.reshape(-1), 'bo', t[1:], yh.reshape(-1)[1:], 'r', t, yReal.reshape(-1), 'k')
+    plt.plot(t, y.reshape(-1), 'bo', t[1:], yh.reshape(-1)[1:], 'r-', t, yReal.reshape(-1), 'k-')
     plt.show()
 
     toc = time.process_time()
