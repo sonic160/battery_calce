@@ -82,9 +82,10 @@ class pf_class:
         wk = np.zeros_like(wkm1)  # = zeros(Ns,1);
 
         # Algorithm 3 of Ref [1]
+        uk = self.gen_sys_noise(Ns)
         for i in range(Ns):
             # Using the PRIOR PDF: pf.p_xk_given_xkm1: eq 62, Ref 1.
-            xk[:, i] = self.sys(k, xkm1[:, i], self.gen_sys_noise())
+            xk[:, i] = self.sys(k, xkm1[:, i], uk[:, i])
 
             # weights (when using the PRIOR pdf): eq 63, Ref 1
             wk[i] = wkm1[i] * self.p_yk_given_xk(t[k], yk, xk[:, i])
@@ -108,7 +109,7 @@ class pf_class:
             # {xk, wk} is an approximate discrete representation of p(x_k | y_{1:k})
 
         # Compute estimated state
-        xhk = np.dot(xk, wk)
+        xhk = np.matmul(xk, wk)
 
         # Store new weights and particles
         self.w[:, k] = wk
@@ -164,6 +165,7 @@ class pf_class:
 
 # Here we test the PF.
 if __name__ == '__main__':
+    tic = time.process_time()
     # Process equation x[k] = sys(k, x[k-1], u[k]);
     nx = 4  # number of states
     def sys(k, xkm1, uk):
@@ -176,16 +178,23 @@ if __name__ == '__main__':
 
     # PDF of process noise and noise generator function
     nu = 4  # size of the vector of process noise
-    sigma_u = .1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
+    sigma_u = 1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
     # sigma_u = np.array([0, 0, 0, 0])
     def p_sys_noise(u):
         return norm.pdf(u, 0, sigma_u)
-    def gen_sys_noise():
-        return np.random.normal(0, sigma_u)
+    def gen_sys_noise(Ns=1):
+        if Ns == 1:
+            sample = np.random.normal(0, sigma_u)
+        else:
+            sample = np.zeros((nu, Ns))
+            for i in range(nu):
+                sample[i, :] = np.random.normal(0, sigma_u[i], size=Ns)
+        
+        return sample
 
     # PDF of observation noise and noise generator function
     nv = 1  # size of the vector of observation noise
-    sigma_v = 5e-3
+    sigma_v = 1e-2
     def p_obs_noise(v):
         return norm.pdf(v, 0, sigma_v)
     def gen_obs_noise():
@@ -246,8 +255,10 @@ if __name__ == '__main__':
 
     # Plot the data
     plt.plot(t, y.reshape(-1), 'bo', t[1:], yh.reshape(-1)[1:], 'r', t, yReal.reshape(-1), 'k')
-    plt.legend(['observation', 'filtered observation', 'True values'])
     plt.show()
+
+    toc = time.process_time()
+    print("Computation time = "+str(1000*(toc - tic ))+"ms")
 
 
 
