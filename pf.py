@@ -69,10 +69,8 @@ class pf_class:
 
         # Initialize variables
         Ns = self.Ns  # number of particles
-        nx = self.particles.shape[0]  # number of states
         if k == 1:
-            for i in range(Ns):  # simulate initial particles
-                self.particles[:, i, 0] = self.gen_x0()  # at step k=0
+            self.particles[:, :, 0] = self.gen_x0(Ns)  # Initial particles.
             self.w[:, 0] = np.repeat(1 / Ns, Ns)  # all particles have the same weight
 
         # Separate memory
@@ -174,8 +172,8 @@ if __name__ == '__main__':
     sigma_u = 1*np.array([1e-2, 1e-6, 1e-4, 1e-5])
     nv = 1  # size of the vector of observation noise
     sigma_v = 5e-2
-    T = 140 # Number of time steps
-    t = np.arange(1, T+1, 1)
+    t = np.arange(1, 140+1, 2)
+    T = len(t) # Number of time steps
 
     def degradation_path(x, t):
         return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
@@ -219,13 +217,13 @@ if __name__ == '__main__':
         return np.random.normal(0, sigma_v)
 
     # Initial PDF
-    def gen_x0():
-        x0 = np.zeros(nx)
-        x0[0] = np.random.uniform(.88, .89)
-        x0[1] = np.random.uniform(-9e-4, -8e-4)
-        x0[2] = np.random.uniform(-3e-4, -2e-4)
-        x0[3] = np.random.uniform(.03, .05)
-        x0[4] = degradation_path(x0, t[0])
+    def gen_x0(Ns=1):
+        x0 = np.zeros((nx, Ns))
+        x0[0, :] = np.random.uniform(.88, .89, size=Ns)
+        x0[1, :] = np.random.uniform(-9e-4, -8e-4, size=Ns)
+        x0[2, :] = np.random.uniform(-3e-4, -2e-4, size=Ns)
+        x0[3, :] = np.random.uniform(.03, .05, size=Ns)
+        x0[4, :] = x0[0, :] * np.exp(x0[1, :] * t[0]) + x0[2, :] * np.exp(x0[3, :] * t[0])
 
         return x0
     
