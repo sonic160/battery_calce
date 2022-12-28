@@ -85,10 +85,10 @@ class pf_class:
         uk = self.gen_sys_noise(Ns)
         for i in range(Ns):
             # Using the PRIOR PDF: pf.p_xk_given_xkm1: eq 62, Ref 1.
-            xk[:, i] = self.sys(k, xkm1[:, i], uk[:, i])
+            xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], uk[:, i])
 
             # weights (when using the PRIOR pdf): eq 63, Ref 1
-            wk[i] = wkm1[i] * self.p_yk_given_xk(t[k], yk, xk[:, i])
+            wk[i] = wkm1[i] * self.p_yk_given_xk(yk, xk[:, i])
 
 
         # Normalize weight vector
@@ -166,22 +166,41 @@ class pf_class:
 # Here we test the PF.
 if __name__ == '__main__':
     tic = time.process_time()
-    # Process equation x[k] = sys(k, x[k-1], u[k]);
-    nx = 4  # number of states
-    def sys(k, xkm1, uk):
-        return np.array([xkm1[0] + uk[0], xkm1[1] + uk[1], xkm1[2] + uk[2], xkm1[3] + uk[3]])
 
-    # Observation equation y[k] = obs(k, x[k], v[k]);
+    # Process equation x[k] = sys(k, x[k-1], u[k]);
+    nx = 5  # number of states
     ny = 1  # number of observations
-    def obs(tk, xk, vk):
-        return xk[0] * np.exp(xk[1] * tk) + xk[2] * np.exp(xk[3] * tk) + vk
+    nu = 4  # size of the vector of process noise
+    sigma_u = 1*np.array([1e-2, 1e-6, 1e-4, 1e-5])
+    nv = 1  # size of the vector of observation noise
+    sigma_v = 5e-2
+    T = 140 # Number of time steps
+    t = np.arange(1, T+1, 1)
+
+    def degradation_path(x, t):
+        return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
+    
+    def degradation_incr(xk, tk, tkm1):
+        return degradation_path(xk, tk) - degradation_path(xk, tkm1)
+
+    def sys(tk, tkm1, xkm1, uk):
+        xk = np.zeros(nx)
+        xk[0] = xkm1[0] + uk[0]
+        xk[1] = xkm1[1] + uk[1]
+        xk[2] = xkm1[2] + uk[2]
+        xk[3] = xkm1[3] + uk[3]
+        xk[4] = xkm1[4] + degradation_incr(xk, tk, tkm1)
+
+        return xk
+
+    # Observation equation y[k] = obs(k, x[k], v[k]);    
+    def obs(xk, vk):
+        return xk[4] + vk
 
     # PDF of process noise and noise generator function
-    nu = 4  # size of the vector of process noise
-    sigma_u = 1*np.array([1e-4, 1e-6, 1e-5, 1e-5])
-    # sigma_u = np.array([0, 0, 0, 0])
     def p_sys_noise(u):
         return norm.pdf(u, 0, sigma_u)
+
     def gen_sys_noise(Ns=1):
         if Ns == 1:
             sample = np.random.normal(0, sigma_u)
@@ -193,25 +212,27 @@ if __name__ == '__main__':
         return sample
 
     # PDF of observation noise and noise generator function
-    nv = 1  # size of the vector of observation noise
-    sigma_v = 1e-2
     def p_obs_noise(v):
         return norm.pdf(v, 0, sigma_v)
+
     def gen_obs_noise():
         return np.random.normal(0, sigma_v)
 
     # Initial PDF
     def gen_x0():
-        return [np.random.uniform(.88, .89), np.random.uniform(-9e-4, -8e-4),
-            np.random.uniform(-3e-4, -2e-4), np.random.uniform(.03, .05)]
+        x0 = np.zeros(nx)
+        x0[0] = np.random.uniform(.88, .89)
+        x0[1] = np.random.uniform(-9e-4, -8e-4)
+        x0[2] = np.random.uniform(-3e-4, -2e-4)
+        x0[3] = np.random.uniform(.03, .05)
+        x0[4] = degradation_path(x0, t[0])
+
+        return x0
     
     # Observation likelihood.
-    def p_yk_given_xk(tk, yk, xk):
-        return p_obs_noise(yk - obs(tk, xk, 0))
+    def p_yk_given_xk(yk, xk):
+        return p_obs_noise(yk - obs(xk, 0))
 
-    # Number of time steps
-    T = 140
-    t = np.arange(1, T+1, 1)
 
     # Separate memory space
     x = np.zeros((nx, T))
@@ -224,20 +245,22 @@ if __name__ == '__main__':
     xh0 = np.array([.887, -8.86e-4, -2.32e-4, .0458])  # initial state, true value
     u[:, 0] = gen_sys_noise()  # initial process noise
     v[:, 0] = gen_obs_noise()  # initial observation noise
-    x[:, 0] = xh0
-    y[:, 0] = obs(t[0], xh0, v[:, 0])
+    x[:4, 0] = xh0
+    x[4, 0] = degradation_path(xh0, t[0])
+    y[:, 0] = x[4, 0]
 
     for k in range(1, T):
         u[:, k] = gen_sys_noise()
         v[:, k] = gen_obs_noise()
-        x[:, k] = sys(t[k], x[:, k-1], u[:, k])
-        y[:, k] = obs(t[k], x[:, k], v[:, k])
+        x[:, k] = sys(t[k], t[k-1], x[:, k-1], u[:, k])
+        y[:, k] = obs(x[:, k], v[:, k])
 
     # Run particle filtering to estimate the state variables.
     xh = np.zeros((nx, T))
-    xh[:, 0] = xh0
+    xh[:4, 0] = xh0
+    xh[4, 0] = degradation_path(xh0, t[0])
     yh = np.zeros((ny, T))
-    yh[:, 0] = obs(1, xh0, 0)
+    yh[:, 0] = obs(xh[:, 0], 0)
 
     pf = pf_class(
         Ns=int(1e3), t=t, nx=nx, gen_x0=gen_x0, sys=sys,
@@ -248,10 +271,10 @@ if __name__ == '__main__':
         print('Iteration = {}/{}'.format(k, T))
         pf.k = k
         xh[:, k] = pf.particle_filter(y[:,k])
-        yh[:, k] = obs(t[k], xh[:, k], 0)
+        yh[:, k] = obs(xh[:, k], 0)
 
     for k in range(T):
-        yReal[:, k] = obs(t[k], x[:, k], 0)
+        yReal[:, k] = obs(x[:, k], 0)
 
     # Plot the data
     plt.plot(t, y.reshape(-1), 'bo', t[1:], yh.reshape(-1)[1:], 'r-', t, yReal.reshape(-1), 'k-')
