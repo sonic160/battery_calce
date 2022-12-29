@@ -15,6 +15,7 @@ class pf_class:
     - state_estimation(): Implement the particle filtering.
     - rul_prediction(): Predict RUL.
     - resample(): Perform resampling in state estimation.
+    - get_state_estimation(): This function allows estimating the mean and CI based on samples and weights.
     '''
 
     def __init__(self, Ns, t, nx, gen_x0, sys, obs, p_yk_given_xk, gen_sys_noise):
@@ -205,17 +206,37 @@ class pf_class:
                         counter += 1
 
             # Calculate the mean and CI for the predicted RUL.
-            rul_mean[i] = np.dot(rul_weights[:, i], rul[:, i]) # Mean value.
-            # Get the CI.
-            idx_sorted = np.argsort(rul[:, i])
-            rul_sorted = rul[:, i][idx_sorted]
-            w_sort = rul_weights[:, i][idx_sorted]
-            rul_cdf = np.cumsum(w_sort)
-            index_l = next(i for i, x in enumerate(rul_cdf) if x > alpha/2)
-            index_u = next(i for i, x in enumerate(rul_cdf) if x > 1-alpha/2)
-            rul_bands[i, :] = np.array([rul_sorted[index_l], rul_sorted[index_u]])
-
+            rul_mean[i], rul_bands[i, :] = self.get_state_estimation(rul[:, i], rul_weights[:, i]) 
+            
         return rul_mean, rul_bands, rul, rul_weights
+
+
+    def get_state_estimation(self, x_sample, weights, alpha=.1):
+        ''' 
+        This function estimates the mean and CI based on particles with weights.
+
+        Args:
+            - x: An array of the particles.
+            - weights: weights.
+            - alpha: confidence level, default is .1.
+
+        Outputs:
+            - est_mean: The mean value of the estimate.
+            - est_bands: Confidence bands.
+        '''
+        # Get the mean estimation
+        est_mean = np.dot(x_sample, weights)
+
+        # Get the CI.
+        idx_sorted = np.argsort(x_sample)
+        x_sorted = x_sample[idx_sorted]
+        w_sort = weights[idx_sorted]
+        x_cdf = np.cumsum(w_sort)
+        index_l = next(i for i, x in enumerate(x_cdf) if x > alpha/2)
+        index_u = next(i for i, x in enumerate(x_cdf) if x > 1-alpha/2)
+        est_bands = np.array([x_sorted[index_l], x_sorted[index_u]])
+
+        return est_mean, est_bands
 
 
 # Here we test the PF.
@@ -324,13 +345,21 @@ if __name__ == '__main__':
     for k in range(1, T):
         print('Iteration = {}/{}'.format(k, T))
         pf.k = k
-        xh[:, k] = pf.state_estimation(y[:,k])
-        yh[:, k] = obs(xh[:, k], 0) # Estimate the degradation.
+        xh[:, k] = pf.state_estimation(y[:,k])        
+
+    y_bands = np.zeros((2, T))
+    for k in range(1,T):
+        # Mean and CI of y.
+        x_tmp = pf.particles[:, :, k]
+        y_tmp = x_tmp[4, :]
+        y_w = pf.w[:, k]
+        yh[:, k], y_bands[:, k] = pf.get_state_estimation(y_tmp, y_w)
 
     # Visualize the result of state estimation.
     fig, ax = plt.subplots()
     ax.plot(t, y.reshape(-1), 'bo', label='Degradation measurement')
     ax.plot(t[1:], yh.reshape(-1)[1:], 'k-', label='PF estimation')
+    ax.fill_between(t[1:], y_bands[0, 1:], y_bands[1, 1:], color='blue', alpha=.25, label='90% Confidence interval')
     ax.plot(t, yReal.reshape(-1), 'r--', label='True degradation')
     ax.legend()
     ax.set_xlabel('t')
