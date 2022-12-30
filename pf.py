@@ -280,8 +280,8 @@ if __name__ == '__main__':
     # Define observation equation.
     ny = 1  # number of observations
     nv = 1  # size of the vector of observation noise
-    # sigma_v = 5e-2
-    sigma_v = 5e-3
+    sigma_v = 1e-2
+    # sigma_v = 5e-3
     # Observation equation y[k] = obs(k, x[k], v[k]);    
     def obs(xk, vk):
         return xk[4] + vk
@@ -293,7 +293,7 @@ if __name__ == '__main__':
         return np.random.normal(0, sigma_v)
     
     # Prepare particle filter.
-    t = np.arange(1, 140+1, 2) # The observation times.
+    t = np.arange(1, 140+1, 1) # The observation times.
     T = len(t) # Number of time steps
     # Generating the initial particles.
     def gen_x0(Ns=1):
@@ -368,24 +368,26 @@ if __name__ == '__main__':
 
     # RUL prediction.
     threshold = .7 # Failure threshold.
-    max_ite = 70 # Maximun number of prediction states.
-    idx_pred = np.arange(10, 70, 10) # Index of the prediction instants.
+    max_ite = 100 # Maximun number of prediction states.
+    max_RUL = 100 # RUL when not failure found.
+    idx_pred = np.arange(30, 140, 10) # Index of the prediction instants.
     # Create the time.
-    t_pred = np.arange(t[-1]+1, t[-1] + 2*max_ite + 1, 2) 
+    t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
     t_pred = np.concatenate((t, t_pred))
     # Run the RUL prediction.
-    rul_mean, rul_bands, rul, rul_weights = pf.rul_prediction(threshold, idx_pred, t_pred)
+    rul_mean, rul_bands, rul, rul_weights = pf.rul_prediction(threshold, idx_pred, t_pred, max_ite=max_ite, max_RUL=max_RUL)
     
     # Visualize the result.
     fig, ax = plt.subplots()
     ax.plot(t_pred[idx_pred], rul_mean, '-ko', label='RUL prediction')
     ax.fill_between(t_pred[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
     # Get the true TTF.
+    true_ttf = 140
     for i in range(T):
         if yReal[0, i] < threshold:
             true_ttf = t[i]
             break
-    ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred], '--r', label='True RUL')
+    ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred]*((true_ttf-t_pred[idx_pred]>=0)), '--r', label='True RUL')
     ax.legend()
     ax.set_xlabel('t')
     ax.set_ylabel('RUL')
@@ -402,13 +404,19 @@ if __name__ == '__main__':
     # Plot.
     for i in range(len(idx_pred)):
         # for each time step perform a kernel density estimation
-        kde = gaussian_kde(dataset=rul[:, i], weights=rul_weights[:,i])
-        den[:, i] = kde.evaluate(yi)
-        ax.plot(xi[i]*np.ones_like(yi), yi, kde.evaluate(yi))
+        try:
+            kde = gaussian_kde(dataset=rul[:, i], weights=rul_weights[:,i])
+            den[:, i] = kde.evaluate(yi)
+            ax.plot(xi[i]*np.ones_like(yi), yi, kde.evaluate(yi))
+        except np.linalg.LinAlgError:
+            print('LinAlgError at ')
+            print(i)
+            continue
+
     # Show the plot
     ax.set_zlim(0, .1)
     ax.plot(t_pred[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
-    ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred], '--r', zs=0, zdir='z', label='True RUL')
+    ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred]*((true_ttf-t_pred[idx_pred]>=0)), '--r', zs=0, zdir='z', label='True RUL')
     ax.legend()
     ax.set_xlabel('$t$')
     ax.set_ylabel('RUL')
