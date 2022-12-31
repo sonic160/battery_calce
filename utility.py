@@ -281,7 +281,8 @@ def cal_ttf(cycle, data, threshold):
     * Threshold: Failure threshold.
 
     Return:
-    * ttf: True lifetime. '''
+    * ttf: True lifetime. 
+    * idx_ttf: The index of the ttf. '''
 
     # Define how many consecutive points needed.
     consecutive_values = 3
@@ -301,7 +302,7 @@ def cal_ttf(cycle, data, threshold):
                 counter = consecutive_values
     ttf = cycle[i-1]
 
-    return ttf
+    return ttf, i-1
 
 # This is for debuging the utility function.
 if __name__ == '__main__':
