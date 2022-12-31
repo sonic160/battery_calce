@@ -39,6 +39,7 @@ class pf_class:
         T = len(t) # Get the number of measuring points.
         # Memory assignment.
         self.w = np.zeros((Ns, T)) # Weights.
+        self.t = t # Observation time
         self.particles = np.zeros((nx, Ns, T)) # Particles.
         # Store the function handles of the state space model.
         self.gen_x0 = gen_x0
@@ -70,6 +71,7 @@ class pf_class:
         This function was developed based on an original verision in Matlab programmed by: Diego Andres Alvarez Marin (diegotorquemada@gmail.com), February 29, 2012.
         """   
         # Get the current step.
+        t = self.t
         k = self.k
         if k == 0:
             raise ValueError('error: Cannot have only one step!')
@@ -92,8 +94,27 @@ class pf_class:
         for i in range(Ns): # For each particle, predict its state in the next time instant.
             xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], uk[:, i]) # This is the state equation.
             wk[i] = wkm1[i] * self.p_yk_given_xk(yk, xk[:, i]) # Update the weights (when using the PRIOR pdf): eq 63, Ref 1.
-        # Normalize weight vector
-        wk = wk / sum(wk)
+        # Handle exception: 
+        if sum(wk) == 0: # If sum(wk)==0: Keep the previous weigths.
+            print(f'Weight NaN: k={k}')
+            xk = self.gen_x0(Ns, t[k])
+            wk = np.repeat(1 / Ns, Ns)
+        else: # Here we scrape the outlier.
+            y_tmp = xkm1[4, :] # This is the degradation estimation of each particles.
+            y_w = wkm1
+            y_mean = self.sys(t[k], t[k-1], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[4]
+            _, y_bands = self.get_state_estimation(y_tmp, y_w) # Get the 90% CI of the estimation.
+            interval_width = y_bands[1]-y_bands[0]
+            # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
+            if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
+                print(f'Outlier: k={k}')
+                # for i in range(Ns):
+                #     xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                # wk = wkm1
+                xk = self.gen_x0(Ns, t[k])
+                wk = np.repeat(1 / Ns, Ns)
+            else:
+                wk = wk/sum(wk)        
 
         # Resampling if necessary.
         resample_percentaje = 0.50
@@ -195,7 +216,8 @@ class pf_class:
                 # Repeatedly moving one step forward.
                 while counter <= max_ite:
                     # Predict the future degradation.
-                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
+                    # x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
+                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, np.zeros_like(x_cur)) # State equation.
                     y_pred = self.obs(x_pred, 0) # Observation equation.
                     # Find failure time.
                     if y_pred < threshold: # If a failure is found.
@@ -206,7 +228,7 @@ class pf_class:
                         counter += 1
 
             # Calculate the mean and CI for the predicted RUL.
-            rul_mean[i], rul_bands[i, :] = self.get_state_estimation(rul[:, i], rul_weights[:, i]) 
+            rul_mean[i], rul_bands[i, :] = self.get_state_estimation(rul[:, i], rul_weights[:, i], alpha=alpha) 
             
         return rul_mean, rul_bands, rul, rul_weights
 
