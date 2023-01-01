@@ -108,11 +108,11 @@ class pf_class:
             # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
             if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
                 print(f'Outlier: k={k}')
-                # for i in range(Ns):
-                #     xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
-                # wk = wkm1
-                xk = self.gen_x0(Ns, t[k])
-                wk = np.repeat(1 / Ns, Ns)
+                for i in range(Ns):
+                    xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                wk = wkm1
+                # xk = self.gen_x0(Ns, t[k])
+                # wk = np.repeat(1 / Ns, Ns)
             else:
                 wk = wk/sum(wk)        
 
@@ -209,15 +209,16 @@ class pf_class:
             idx_pred_i = idx_pred[i] # Index of the prediction instant.
             rul_weights[:, i] = self.w[:, idx_pred_i] # Get the weights. 
 
+            # Degradation state estimation:
+            x_h = np.matmul(self.particles[:, :, idx_pred_i], self.w[:, idx_pred_i])
             # For each particle, repeat the state space model until we find failure or max_ite is reached.
             for j in range(self.Ns):
                 counter = 1 # This is the step we extropolate into the future.
-                x_cur = self.particles[:, j, idx_pred_i] # The current values of the particles.
+                x_cur = x_h
                 # Repeatedly moving one step forward.
                 while counter <= max_ite:
                     # Predict the future degradation.
-                    # x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
-                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, np.zeros_like(x_cur)) # State equation.
+                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
                     y_pred = self.obs(x_pred, 0) # Observation equation.
                     # Find failure time.
                     if y_pred < threshold: # If a failure is found.
@@ -269,8 +270,8 @@ if __name__ == '__main__':
     # Process equation x[k] = sys(k, x[k-1], u[k]):
     nx = 5  # number of states
     nu = 4  # size of the vector of process noise
-    # sigma_u = 1*np.array([1e-2, 1e-6, 1e-4, 1e-5])
-    sigma_u = 1e-1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
+    sigma_u = 1*np.array([1e-2, 1e-6, 1e-5, 1e-6])
+    # sigma_u = 1e-1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
     # Degradation model.
     def degradation_path(x, t):
         return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
