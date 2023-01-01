@@ -72,7 +72,7 @@ def p_sys_noise(u):
 # Define observation equation.
 ny = 1  # number of observations
 nv = 1  # size of the vector of observation noise
-sigma_v = 5e-2
+sigma_v = 3e-2
 # Observation equation y[k] = obs(k, x[k], v[k]);    
 def obs(xk, vk):
     return xk[4] + vk
@@ -91,7 +91,7 @@ def gen_x0(Ns=1, t_0=t[0]):
     x0[0, :] = np.random.uniform(1, 1.2, size=Ns)
     x0[1, :] = np.random.uniform(-1/3000, -1/1000, size=Ns)
     x0[2, :] = np.random.uniform(-2e-3, -1e-3, size=Ns)
-    x0[3, :] = np.random.uniform(.005, .01, size=Ns)
+    x0[3, :] = np.random.uniform(.005, .008, size=Ns)
     x0[4, :] = x0[0, :] * np.exp(x0[1, :] * t_0) + x0[2, :] * np.exp(x0[3, :] * t_0)
     return x0
 # Observation likelihood.
@@ -125,7 +125,9 @@ for k in range(1,T):
 
 max_ite = 50 # Maximun number of prediction states.
 max_RUL = 50 # RUL when not failure found.
-idx_pred = np.arange(len(t)-50, len(t), 10, dtype=int) # Index of the prediction instants.
+n_pred = 50
+step = 1
+idx_pred = np.arange(idx_ttf-n_pred, idx_ttf, step, dtype=int) # Index of the prediction instants.
 # Create the time.
 t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
 t_pred = np.concatenate((t, t_pred))
@@ -147,7 +149,7 @@ axes[0].legend()
 ax = axes[1]
 ax.plot(t_pred[idx_pred], rul_mean, '-ko', label='RUL prediction')
 ax.fill_between(t_pred[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
-ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred]*((true_ttf-t_pred[idx_pred]>=0)), '--r', label='True RUL')
+ax.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', label='True RUL')
 ax.legend()
 ax.set_xlabel('t')
 ax.set_ylabel('RUL')
