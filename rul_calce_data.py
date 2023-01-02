@@ -16,7 +16,7 @@ battery_list = ['CS2_35', 'CS2_36', 'CS2_37', 'CS2_38']
 with open('data_all.pickle', 'rb') as f:
     data_all = pickle.load(f)
 
-name = battery_list[0]
+name = battery_list[3]
 battery = data_all[name]
 
 # Get the time and degradation measurement. Perform filtering.
@@ -73,7 +73,7 @@ def p_sys_noise(u):
 # Define observation equation.
 ny = 1  # number of observations
 nv = 1  # size of the vector of observation noise
-sigma_v = 3e-2
+sigma_v = 1e-2
 # Observation equation y[k] = obs(k, x[k], v[k]);    
 def obs(xk, vk):
     return xk[4] + vk

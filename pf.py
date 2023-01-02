@@ -34,6 +34,7 @@ class pf_class:
         - gen_sys_noise: function handle of a procedure that generates system noise.
         - sys: function handle to process equation.
         - obs: function handle to observation equation.
+        - initial_outlier_quota: The number of concecutive outliers allowed, before reinitiating the particles.
         '''
         self.k = 0 # Current step.
         self.Ns = Ns # Particle size.
@@ -99,9 +100,17 @@ class pf_class:
             wk[i] = wkm1[i] * self.p_yk_given_xk(yk, xk[:, i]) # Update the weights (when using the PRIOR pdf): eq 63, Ref 1.
         # Handle exception: 
         if sum(wk) == 0: # If sum(wk)==0: Keep the previous weigths.
-            print(f'Weight NaN: k={k}')
-            xk = self.gen_x0(Ns, t[k])
-            wk = np.repeat(1 / Ns, Ns)
+            if self.outlier_quota == 1:
+                print(f'\nReinitiate the particles: k={k}')
+                xk = self.gen_x0(Ns, t[k])
+                wk = np.repeat(1 / Ns, Ns)
+                self.outlier_quota = self.initial_outlier_quota
+            else:
+                print(f'\nSmoothing due to weight NaN: k={k}')
+                for i in range(Ns):
+                    xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                wk = wkm1
+                self.outlier_quota -= 1
         else: # Here we scrape the outlier.
             y_tmp = xkm1[-1, :] # This is the degradation estimation of each particles.
             y_w = wkm1
@@ -110,12 +119,13 @@ class pf_class:
             interval_width = y_bands[1]-y_bands[0]
             # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
             if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
-                if self.outlier_quota == 0:
+                if self.outlier_quota == 1:
+                    print(f'\nReinitiate the particles: k={k}')
                     xk = self.gen_x0(Ns, t[k])
                     wk = np.repeat(1 / Ns, Ns)
                     self.outlier_quota = self.initial_outlier_quota
                 else:
-                    print(f'Outlier: k={k}')
+                    print(f'\nSmoothing due to outlier: k={k}')
                     for i in range(Ns):
                         xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                     wk = wkm1
@@ -130,7 +140,7 @@ class pf_class:
         # Calculate effective sample size: eq 48, Ref 1
         Neff = 1 / sum(wk**2)
         if Neff < Nt:
-            print('Resampling ...')
+            # print('Resampling ...')
             xk, wk = self.resample(xk, wk, resampling_strategy)
 
         # Compute estimated state
@@ -418,7 +428,7 @@ if __name__ == '__main__':
         if yReal[0, i] < threshold:
             true_ttf = t[i]
             break
-    ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred]*((true_ttf-t_pred[idx_pred]>=0)), '--r', label='True RUL')
+    ax.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', label='True RUL')
     ax.legend()
     ax.set_xlabel('t')
     ax.set_ylabel('RUL')
@@ -447,7 +457,7 @@ if __name__ == '__main__':
     # Show the plot
     ax.set_zlim(0, .1)
     ax.plot(t_pred[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
-    ax.plot(t_pred[idx_pred], true_ttf-t_pred[idx_pred]*((true_ttf-t_pred[idx_pred]>=0)), '--r', zs=0, zdir='z', label='True RUL')
+    ax.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
     ax.legend()
     ax.set_xlabel('$t$')
     ax.set_ylabel('RUL')
