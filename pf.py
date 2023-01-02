@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import time
 from scipy.stats import norm
 from scipy.stats import gaussian_kde
+from tqdm import tqdm
 
 
 class pf_class:
@@ -18,7 +19,7 @@ class pf_class:
     - get_state_estimation(): This function allows estimating the mean and CI based on samples and weights.
     '''
 
-    def __init__(self, Ns, t, nx, gen_x0, sys, obs, p_yk_given_xk, gen_sys_noise):
+    def __init__(self, Ns, t, nx, gen_x0, sys, obs, p_yk_given_xk, gen_sys_noise, initial_outlier_quota=3):
         '''
         Initialization function of the PF class.
 
@@ -47,6 +48,8 @@ class pf_class:
         self.obs = obs
         self.p_yk_given_xk = p_yk_given_xk
         self.gen_sys_noise = gen_sys_noise
+        self.outlier_quota = initial_outlier_quota
+        self.initial_outlier_quota = initial_outlier_quota
 
 
     def state_estimation(self, yk, resampling_strategy='multinomial_resampling'):
@@ -100,21 +103,26 @@ class pf_class:
             xk = self.gen_x0(Ns, t[k])
             wk = np.repeat(1 / Ns, Ns)
         else: # Here we scrape the outlier.
-            y_tmp = xkm1[4, :] # This is the degradation estimation of each particles.
+            y_tmp = xkm1[-1, :] # This is the degradation estimation of each particles.
             y_w = wkm1
-            y_mean = self.sys(t[k], t[k-1], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[4]
+            y_mean = self.sys(t[k], t[k-1], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[-1]
             _, y_bands = self.get_state_estimation(y_tmp, y_w) # Get the 90% CI of the estimation.
             interval_width = y_bands[1]-y_bands[0]
             # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
             if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
-                print(f'Outlier: k={k}')
-                for i in range(Ns):
-                    xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
-                wk = wkm1
-                # xk = self.gen_x0(Ns, t[k])
-                # wk = np.repeat(1 / Ns, Ns)
+                if self.outlier_quota == 0:
+                    xk = self.gen_x0(Ns, t[k])
+                    wk = np.repeat(1 / Ns, Ns)
+                    self.outlier_quota = self.initial_outlier_quota
+                else:
+                    print(f'Outlier: k={k}')
+                    for i in range(Ns):
+                        xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                    wk = wkm1
+                    self.outlier_quota -= 1                    
             else:
-                wk = wk/sum(wk)        
+                wk = wk/sum(wk)
+                self.outlier_quota = self.initial_outlier_quota        
 
         # Resampling if necessary.
         resample_percentaje = 0.50
@@ -205,7 +213,7 @@ class pf_class:
         rul_weights = np.zeros((self.Ns, n_pred))
 
         # Do a loop to make RUL predictions:
-        for i in range(n_pred):
+        for i in tqdm(range(n_pred)):
             idx_pred_i = idx_pred[i] # Index of the prediction instant.
             rul_weights[:, i] = self.w[:, idx_pred_i] # Get the weights. 
 

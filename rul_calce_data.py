@@ -8,6 +8,7 @@ from utility import cal_ttf
 from scipy.stats import norm
 from scipy.stats import gaussian_kde
 from pf import pf_class
+from tqdm import tqdm
 
 
 battery_list = ['CS2_35', 'CS2_36', 'CS2_37', 'CS2_38']
@@ -40,7 +41,7 @@ y = y[:idx_ttf+10]
 # Process equation x[k] = sys(k, x[k-1], u[k]):
 nx = 5  # number of states
 nu = 4  # size of the vector of process noise
-sigma_u = np.array([1e-2, 1e-4, 1e-4, 1e-3])
+sigma_u = np.array([1e-2, 1e-5, 1e-4, 1e-3])
 # Degradation model.
 def degradation_path(x, t):
     return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
@@ -89,9 +90,9 @@ T = len(t) # Number of time steps
 def gen_x0(Ns=1, t_0=t[0]):
     x0 = np.zeros((nx, Ns))
     x0[0, :] = np.random.uniform(1, 1.2, size=Ns)
-    x0[1, :] = np.random.uniform(-1/3000, -1/1000, size=Ns)
+    x0[1, :] = np.random.uniform(-1e-4, -2e-5, size=Ns)
     x0[2, :] = np.random.uniform(-2e-3, -1e-3, size=Ns)
-    x0[3, :] = np.random.uniform(.005, .008, size=Ns)
+    x0[3, :] = np.random.uniform(.005, .01, size=Ns)
     x0[4, :] = x0[0, :] * np.exp(x0[1, :] * t_0) + x0[2, :] * np.exp(x0[3, :] * t_0)
     return x0
 # Observation likelihood.
@@ -100,16 +101,16 @@ def p_yk_given_xk(yk, xk):
 
 
 # Run particle filtering to estimate the state variables.
+Ns = 1e3
 xh = np.zeros((nx, T)) # Estimate of the state variables.
 yh = np.zeros((ny, T)) # Estimate of the observation variable.
 # Create a particle filter object.
 pf = pf_class(
-    Ns=int(1e3), t=t, nx=nx, gen_x0=gen_x0, sys=sys, obs=obs,
+    Ns=int(Ns), t=t, nx=nx, gen_x0=gen_x0, sys=sys, obs=obs,
     p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise
 )
 # Do the filtering:
-for k in range(1, T):
-    print('Iteration = {}/{}'.format(k, T))
+for k in tqdm(range(1, T)):
     pf.k = k
     xh[:, k] = pf.state_estimation(y[k])        
 
@@ -153,3 +154,5 @@ ax.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]
 ax.legend()
 ax.set_xlabel('t')
 ax.set_ylabel('RUL')
+
+plt.show()
