@@ -223,7 +223,7 @@ if __name__ == '__main__':
     battery = data_all[name]
     # Get the time and degradation measurement. Perform filtering.
     t = battery['cycle']
-    y = battery['charging capacity']
+    y = battery['discharging capacity']
     t = np.array(t)
     y = np.array(y)
 
