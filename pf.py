@@ -232,12 +232,14 @@ class pf_class:
             # For each particle, repeat the state space model until we find failure or max_ite is reached.
             for j in range(self.Ns):
                 counter = 1 # This is the step we extropolate into the future.
-                x_cur = self.particles[:, j, idx_pred_i]
-                x_cur[-1] = x_h[-1]
+                x_cur = self.particles[:, j, idx_pred_i] # Get the current particles.
+                x_cur[-1] = x_h[-1] # Make all the particles starts from the same degradation state estimation.
                 # Repeatedly moving one step forward.
                 while counter <= max_ite:
                     # Predict the future degradation.
-                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
+                    # x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
+                    # We do not consider state noise in the rul prediction.
+                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, np.zeros_like(x_cur)) # State equation.
                     y_pred = self.obs(x_pred, 0) # Observation equation.
                     # Find failure time.
                     if y_pred < threshold: # If a failure is found.
