@@ -175,7 +175,7 @@ def extract_discharge_phase(df_cycle):
     df_d = df_cycle[df_cycle['Step_Index'] == 7]
 
     # Handle exception: Some test cycle does not have the discharging phase.
-    if(df_d.shape[0] == 0):
+    if(df_d.shape[0] <= 1):
         discharge_capacity = np.nan
         internal_resistance = np.nan
         health_indicator = np.nan
