@@ -208,7 +208,7 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     ax3.set_zlabel('Density')
     plt.show()
 
-    return xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights
+    return xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf
 
 
 # Here we test the PF on real data from Calce..
@@ -255,11 +255,12 @@ if __name__ == '__main__':
     t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
     t_pred = np.concatenate((t, t_pred))
     
-    xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL)
+    xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL)
 
     # Save the result.
     file_name = 'result_' + name + '.pickle'
     with open(file_name, 'wb') as f:
         pickle.dump([t, y, threshold, idx_ttf, idx_pred, true_ttf, max_RUL, 
-            xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights
+            xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, t_pred,
+            pf.particles, pf.w
         ], f, protocol=pickle.HIGHEST_PROTOCOL)    

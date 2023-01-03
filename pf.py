@@ -232,7 +232,8 @@ class pf_class:
             # For each particle, repeat the state space model until we find failure or max_ite is reached.
             for j in range(self.Ns):
                 counter = 1 # This is the step we extropolate into the future.
-                x_cur = x_h
+                x_cur = self.particles[:, j, idx_pred_i]
+                x_cur[-1] = x_h[-1]
                 # Repeatedly moving one step forward.
                 while counter <= max_ite:
                     # Predict the future degradation.
