@@ -101,12 +101,12 @@ class pf_class:
         # Handle exception: 
         if sum(wk) == 0: # If sum(wk)==0: Keep the previous weigths.
             if self.outlier_quota == 1:
-                print(f'\nReinitiate the particles: k={k}')
+                print(f'Reinitiate the particles: k={k}')
                 xk = self.gen_x0(Ns, t[k])
                 wk = np.repeat(1 / Ns, Ns)
                 self.outlier_quota = self.initial_outlier_quota
             else:
-                print(f'\nSmoothing due to weight NaN: k={k}')
+                # print(f'Smoothing due to weight NaN: k={k}')
                 for i in range(Ns):
                     xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                 wk = wkm1
@@ -120,12 +120,12 @@ class pf_class:
             # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
             if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
                 if self.outlier_quota == 1:
-                    print(f'\nReinitiate the particles: k={k}')
+                    # print(f'Reinitiate the particles: k={k}')
                     xk = self.gen_x0(Ns, t[k])
                     wk = np.repeat(1 / Ns, Ns)
                     self.outlier_quota = self.initial_outlier_quota
                 else:
-                    print(f'\nSmoothing due to outlier: k={k}')
+                    # print(f'Smoothing due to outlier: k={k}')
                     for i in range(Ns):
                         xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                     wk = wkm1

@@ -77,7 +77,7 @@ def create_mdl(sigma_u, sigma_v):
     return nx, ny, sys, obs, p_yk_given_xk, gen_sys_noise
 
 
-def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_pred, t_pred, max_ite, max_RUL):
+def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL):
     '''
     This function run the PF for the data from a given battery and predict its RUL.
 
@@ -142,6 +142,72 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_pred, t_pr
     # Run the RUL prediction.
     rul_mean, rul_bands, rul, rul_weights = pf.rul_prediction(threshold, idx_pred, t_pred, max_ite=max_ite, max_RUL=max_RUL)    
 
+    # Plot the degradation.
+    ax1 = plt.subplot()
+    ax1.plot(t, y, 'bo', label='Measurement')
+    ax1.plot(t, threshold*np.ones_like(t), 'r--', label='Failure threshold')
+    ax1.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
+    ax1.plot(t[1:], yh.reshape(-1)[1:], 'k+-', label='PF estimation')
+    ax1.fill_between(t[1:], y_bands[0, 1:], y_bands[1, 1:], color='blue', alpha=.25, label='90% Confidence interval')
+    ax1.set_xlabel('t')
+    ax1.set_ylabel('Capacity (Ah)')
+    ax1.legend()
+    plt.show()
+
+    # Zoom in the predicted range.
+    ax1b = plt.subplot()
+    ax1b.plot(t[idx_pred], y[idx_pred], 'bo', label='Measurement')
+    ax1b.plot(t[idx_pred], threshold*np.ones_like(t[idx_pred]), 'r--', label='Failure threshold')
+    ax1b.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
+    ax1b.plot(t[idx_pred], yh.reshape(-1)[idx_pred], 'k+-', label='PF estimation')
+    ax1b.fill_between(t[idx_pred], y_bands[0, idx_pred], y_bands[1, idx_pred], color='blue', alpha=.25, label='90% Confidence interval')
+    ax1b.set_xlabel('t')
+    ax1b.set_ylabel('Capacity (Ah)')
+    ax1b.set_ylim(threshold-.02)
+    ax1b.legend()
+    plt.show()
+
+    # RUL.
+    true_ttf = t[idx_ttf]
+    ax2 = plt.subplot()
+    ax2.plot(t_pred[idx_pred], rul_mean, '-ko', label='RUL prediction')
+    ax2.fill_between(t_pred[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
+    ax2.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', label='True RUL')
+    ax2.legend()
+    ax2.set_xlabel('t')
+    ax2.set_ylabel('RUL')
+    plt.show()
+
+    # 3d plot of the predicted RULs.
+    fig = plt.figure()
+    fig.set_size_inches(20, 6)
+    ax3 = fig.add_subplot(projection='3d')
+    # Set the x and y data for the plot
+    xi = t_pred[idx_pred]
+    yi = np.linspace(0, max_RUL, 1000)
+    xx, yy = np.meshgrid(xi, yi)
+    den = np.zeros_like(xx)
+    # Plot.
+    for i in range(len(idx_pred)):
+        # for each time step perform a kernel density estimation
+        try:
+            kde = gaussian_kde(dataset=rul[:, i], weights=rul_weights[:,i])
+            den[:, i] = kde.evaluate(yi)
+            ax3.plot(xi[i]*np.ones_like(yi), yi, kde.evaluate(yi))
+        except np.linalg.LinAlgError:
+            print('LinAlgError at ')
+            print(i)
+            continue
+    # Show the plot
+    ax3.set_zlim(0, .1)
+    ax3.plot(t_pred[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
+    ax3.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
+    ax3.legend()
+    ax3.set_xlabel('$t$')
+    ax3.set_ylabel('RUL')
+    ax3.set_zlabel('Density')
+    plt.show()
+
     return xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights
 
 
@@ -189,63 +255,11 @@ if __name__ == '__main__':
     t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
     t_pred = np.concatenate((t, t_pred))
     
-    xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_pred, t_pred, max_ite, max_RUL)
+    xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL)
 
     # Save the result.
     file_name = 'result_' + name + '.pickle'
     with open(file_name, 'wb') as f:
         pickle.dump([t, y, threshold, idx_ttf, idx_pred, true_ttf, max_RUL, 
             xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights
-        ], f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    # Plot the degradation.
-    ax1 = plt.subplot()
-    ax1.plot(t, y, 'bo', label='Measurement')
-    ax1.plot(t, threshold*np.ones_like(t), 'r--', label='Failure threshold')
-    ax1.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
-    ax1.plot(t[1:], yh.reshape(-1)[1:], 'k+-', label='PF estimation')
-    ax1.fill_between(t[1:], y_bands[0, 1:], y_bands[1, 1:], color='blue', alpha=.25, label='90% Confidence interval')
-    ax1.set_xlabel('t')
-    ax1.set_ylabel('Capacity (Ah)')
-    ax1.legend()
-    plt.show()
-
-    # RUL.
-    ax2 = plt.subplot()
-    ax2.plot(t_pred[idx_pred], rul_mean, '-ko', label='RUL prediction')
-    ax2.fill_between(t_pred[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
-    ax2.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', label='True RUL')
-    ax2.legend()
-    ax2.set_xlabel('t')
-    ax2.set_ylabel('RUL')
-    plt.show()
-
-    # 3d plot of the predicted RULs.
-    fig = plt.figure()
-    fig.set_size_inches(20, 6)
-    ax3 = fig.add_subplot(projection='3d')
-    # Set the x and y data for the plot
-    xi = t_pred[idx_pred]
-    yi = np.linspace(0, max_RUL, 1000)
-    xx, yy = np.meshgrid(xi, yi)
-    den = np.zeros_like(xx)
-    # Plot.
-    for i in range(len(idx_pred)):
-        # for each time step perform a kernel density estimation
-        try:
-            kde = gaussian_kde(dataset=rul[:, i], weights=rul_weights[:,i])
-            den[:, i] = kde.evaluate(yi)
-            ax3.plot(xi[i]*np.ones_like(yi), yi, kde.evaluate(yi))
-        except np.linalg.LinAlgError:
-            print('LinAlgError at ')
-            print(i)
-            continue
-    # Show the plot
-    ax3.set_zlim(0, .1)
-    ax3.plot(t_pred[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
-    ax3.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
-    ax3.legend()
-    ax3.set_xlabel('$t$')
-    ax3.set_ylabel('RUL')
-    ax3.set_zlabel('Density')
-    plt.show()
+        ], f, protocol=pickle.HIGHEST_PROTOCOL)    
