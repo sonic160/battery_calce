@@ -96,7 +96,7 @@ class pf_class:
         # Algorithm 3 of Ref [1].
         uk = self.gen_sys_noise(Ns) # Generate the process noise. 
         for i in range(Ns): # For each particle, predict its state in the next time instant.
-            xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], uk[:, i]) # This is the state equation.
+            xk[:, i] = self.sys(t[k], xkm1[:, i], uk[:, i]) # This is the state equation.
             wk[i] = wkm1[i] * self.p_yk_given_xk(yk, xk[:, i]) # Update the weights (when using the PRIOR pdf): eq 63, Ref 1.
         # Handle exception: 
         if sum(wk) == 0: # If sum(wk)==0: Keep the previous weigths.
@@ -108,17 +108,18 @@ class pf_class:
             else:
                 # print(f'Smoothing due to weight NaN: k={k}')
                 for i in range(Ns):
-                    xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                    xk[:, i] = self.sys(t[k], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                 wk = wkm1
                 self.outlier_quota -= 1
         else: # Here we scrape the outlier.
             y_tmp = xkm1[-1, :] # This is the degradation estimation of each particles.
             y_w = wkm1
-            y_mean = self.sys(t[k], t[k-1], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[-1]
+            y_mean = self.sys(t[k], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[-1]
             _, y_bands = self.get_state_estimation(y_tmp, y_w) # Get the 90% CI of the estimation.
             interval_width = y_bands[1]-y_bands[0]
             # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
-            if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
+            margin = 1
+            if (yk > y_mean+margin*interval_width) | (yk < y_mean-margin*interval_width):
                 if self.outlier_quota == 1:
                     # print(f'Reinitiate the particles: k={k}')
                     xk = self.gen_x0(Ns, t[k])
@@ -127,7 +128,7 @@ class pf_class:
                 else:
                     # print(f'Smoothing due to outlier: k={k}')
                     for i in range(Ns):
-                        xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                        xk[:, i] = self.sys(t[k], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                     wk = wkm1
                     self.outlier_quota -= 1                    
             else:
@@ -237,9 +238,9 @@ class pf_class:
                 # Repeatedly moving one step forward.
                 while counter <= max_ite:
                     # Predict the future degradation.
-                    # x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
+                    # x_pred = self.sys(t_pred[idx_pred_i+counter], x_cur, self.gen_sys_noise()) # State equation.
                     # We do not consider state noise in the rul prediction.
-                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, np.zeros_like(x_cur)) # State equation.
+                    x_pred = self.sys(t_pred[idx_pred_i+counter], x_cur, np.zeros_like(x_cur)) # State equation.
                     y_pred = self.obs(x_pred, 0) # Observation equation.
                     # Find failure time.
                     if y_pred < threshold: # If a failure is found.
@@ -291,22 +292,19 @@ if __name__ == '__main__':
     # Process equation x[k] = sys(k, x[k-1], u[k]):
     nx = 5  # number of states
     nu = 4  # size of the vector of process noise
-    sigma_u = 1*np.array([1e-2, 1e-6, 1e-5, 1e-6])
-    # sigma_u = 1e-1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
+    # sigma_u = 1*np.array([1e-2, 1e-6, 1e-5, 1e-6])
+    sigma_u = 1*np.array([1e-5, 1e-6, 1e-5, 1e-6])
     # Degradation model.
     def degradation_path(x, t):
         return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
-    # Degradation increments, calculated based on the degradation model.
-    def degradation_incr(xk, tk, tkm1):
-        return degradation_path(xk, tk) - degradation_path(xk, tkm1)
     # Process model.
-    def sys(tk, tkm1, xkm1, uk):
+    def sys(tk, xkm1, uk):
         xk = np.zeros(nx)
         xk[0] = xkm1[0] + uk[0]
         xk[1] = xkm1[1] + uk[1]
         xk[2] = xkm1[2] + uk[2]
         xk[3] = xkm1[3] + uk[3]
-        xk[4] = xkm1[4] + degradation_incr(xk, tk, tkm1)
+        xk[4] = degradation_path(np.array([xk[0], xk[1], xk[2], xk[3]]), tk)
         return xk
     # Generate system noise.
     def gen_sys_noise(Ns=1):
@@ -340,13 +338,13 @@ if __name__ == '__main__':
     t = np.arange(1, 140+1, 1) # The observation times.
     T = len(t) # Number of time steps
     # Generating the initial particles.
-    def gen_x0(Ns=1):
+    def gen_x0(Ns=1, t_0=t[0]):
         x0 = np.zeros((nx, Ns))
         x0[0, :] = np.random.uniform(.88, .89, size=Ns)
         x0[1, :] = np.random.uniform(-9e-4, -8e-4, size=Ns)
         x0[2, :] = np.random.uniform(-3e-4, -2e-4, size=Ns)
         x0[3, :] = np.random.uniform(.03, .05, size=Ns)
-        x0[4, :] = x0[0, :] * np.exp(x0[1, :] * t[0]) + x0[2, :] * np.exp(x0[3, :] * t[0])
+        x0[4, :] = degradation_path(np.array([x0[0], x0[1], x0[2], x0[3]]), t_0)
         return x0
     # Observation likelihood.
     def p_yk_given_xk(yk, xk):
@@ -371,7 +369,7 @@ if __name__ == '__main__':
     for k in range(1, T):
         u[:, k] = gen_sys_noise()
         v[:, k] = gen_obs_noise()
-        x[:, k] = sys(t[k], t[k-1], x[:, k-1], u[:, k])
+        x[:, k] = sys(t[k], x[:, k-1], u[:, k])
         y[:, k] = obs(x[:, k], v[:, k])
     # Get the true degradation.
     for k in range(T):

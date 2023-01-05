@@ -31,19 +31,16 @@ def create_mdl(sigma_u, sigma_v):
     # Degradation model.
     def degradation_path(x, t):
         return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
-    # Degradation increments, calculated based on the degradation model.
-    def degradation_incr(xk, tk, tkm1):
-        return degradation_path(xk, tk) - degradation_path(xk, tkm1)
     # Process model.
     nx = 5  # number of states
     nu = 4  # size of the vector of process noise
-    def sys(tk, tkm1, xkm1, uk):
+    def sys(tk, xkm1, uk):
         xk = np.zeros(nx)
         xk[0] = xkm1[0] + uk[0]
         xk[1] = xkm1[1] + uk[1]
         xk[2] = xkm1[2] + uk[2]
         xk[3] = xkm1[3] + uk[3]
-        xk[4] = xkm1[4] + degradation_incr(xk, tk, tkm1)
+        xk[4] = degradation_path(np.array([xk[0], xk[1], xk[2], xk[3]]), tk)
         return xk
     # Generate system noise.
     def gen_sys_noise(Ns=1):
@@ -119,7 +116,8 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     # Create a particle filter object.
     pf = pf_class(
         Ns=int(Ns), t=t, nx=nx, gen_x0=gen_x0, sys=sys, obs=obs,
-        p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise
+        p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise,
+        initial_outlier_quota=3
     )
     # Do the filtering:
     T = len(t) # Number of time steps
@@ -219,19 +217,20 @@ if __name__ == '__main__':
     with open('data_all.pickle', 'rb') as f:
         data_all = pickle.load(f)
 
-    name = battery_list[0]
+    name = battery_list[3]
     battery = data_all[name]
+    battery.fillna(method='ffill', inplace=True)
     # Get the time and degradation measurement. Perform filtering.
     t = battery['cycle']
     y = battery['discharging capacity']
-    t = np.array(t)
-    y = np.array(y)
+    # t = np.array(t)
+    # y = np.array(y)
 
     # We can try also eliminate the outliers explicitly:
-    # rolling_window = 20
-    # idx = drop_outlier_sw(y, rolling_window)
-    # t = np.array(t[idx])
-    # y = np.array(y[idx])
+    rolling_window = 20
+    idx = drop_outlier_sw(y, rolling_window)
+    t = np.array(t[idx])
+    y = np.array(y[idx])
 
     # Calculate true TTF.
     threshold = .7*1.1
@@ -246,10 +245,10 @@ if __name__ == '__main__':
     sigma_v = 1e-2
     Ns = 1e3
     # For the RUL prediction.
-    max_ite = 60 # Maximun number of prediction states.
-    max_RUL = 60 # RUL when not failure found.
-    idx_start = 50
-    step = 5
+    max_ite = 200 # Maximun number of prediction states.
+    max_RUL = 200 # RUL when not failure found.
+    idx_start = 200
+    step = 10
     idx_pred = np.arange(idx_ttf-idx_start, idx_ttf+step, step, dtype=int) # Index of the prediction instants.
     # Create the time.
     t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
@@ -257,10 +256,10 @@ if __name__ == '__main__':
     
     xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL)
 
-    # Save the result.
-    file_name = 'result_' + name + '.pickle'
-    with open(file_name, 'wb') as f:
-        pickle.dump([t, y, threshold, idx_ttf, idx_pred, true_ttf, max_RUL, 
-            xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, t_pred,
-            pf.particles, pf.w
-        ], f, protocol=pickle.HIGHEST_PROTOCOL)    
+    # # Save the result.
+    # file_name = 'result_' + name + '.pickle'
+    # with open(file_name, 'wb') as f:
+    #     pickle.dump([t, y, threshold, idx_ttf, idx_pred, true_ttf, max_RUL, 
+    #         xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, t_pred,
+    #         pf.particles, pf.w
+    #     ], f, protocol=pickle.HIGHEST_PROTOCOL)    
