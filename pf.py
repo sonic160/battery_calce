@@ -5,6 +5,8 @@ import time
 from scipy.stats import norm
 from scipy.stats import gaussian_kde
 from tqdm import tqdm
+from scipy.optimize import fsolve
+import math
 
 
 class pf_class:
@@ -19,7 +21,7 @@ class pf_class:
     - get_state_estimation(): This function allows estimating the mean and CI based on samples and weights.
     '''
 
-    def __init__(self, Ns, t, nx, gen_x0, sys, obs, p_yk_given_xk, gen_sys_noise, initial_outlier_quota=3):
+    def __init__(self, Ns, t, nx, gen_x0, sys, obs, p_yk_given_xk, gen_sys_noise, degradation_path=[], initial_outlier_quota=3):
         '''
         Initialization function of the PF class.
 
@@ -34,6 +36,7 @@ class pf_class:
         - gen_sys_noise: function handle of a procedure that generates system noise.
         - sys: function handle to process equation.
         - obs: function handle to observation equation.
+        - degradation_path: function handle to calcualte the degradation measures.
         - initial_outlier_quota: The number of concecutive outliers allowed, before reinitiating the particles.
         '''
         self.k = 0 # Current step.
@@ -51,6 +54,7 @@ class pf_class:
         self.gen_sys_noise = gen_sys_noise
         self.outlier_quota = initial_outlier_quota
         self.initial_outlier_quota = initial_outlier_quota
+        self.degradation_path = degradation_path
 
 
     def state_estimation(self, yk, resampling_strategy='multinomial_resampling'):
@@ -96,29 +100,30 @@ class pf_class:
         # Algorithm 3 of Ref [1].
         uk = self.gen_sys_noise(Ns) # Generate the process noise. 
         for i in range(Ns): # For each particle, predict its state in the next time instant.
-            xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], uk[:, i]) # This is the state equation.
+            xk[:, i] = self.sys(t[k], xkm1[:, i], uk[:, i]) # This is the state equation.
             wk[i] = wkm1[i] * self.p_yk_given_xk(yk, xk[:, i]) # Update the weights (when using the PRIOR pdf): eq 63, Ref 1.
         # Handle exception: 
         if sum(wk) == 0: # If sum(wk)==0: Keep the previous weigths.
             if self.outlier_quota == 1:
-                print(f'Reinitiate the particles: k={k}')
+                # print(f'Reinitiate the particles: k={k}')
                 xk = self.gen_x0(Ns, t[k])
                 wk = np.repeat(1 / Ns, Ns)
                 self.outlier_quota = self.initial_outlier_quota
             else:
                 # print(f'Smoothing due to weight NaN: k={k}')
                 for i in range(Ns):
-                    xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                    xk[:, i] = self.sys(t[k], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                 wk = wkm1
                 self.outlier_quota -= 1
         else: # Here we scrape the outlier.
             y_tmp = xkm1[-1, :] # This is the degradation estimation of each particles.
             y_w = wkm1
-            y_mean = self.sys(t[k], t[k-1], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[-1]
+            y_mean = self.sys(t[k], np.matmul(xkm1, wkm1), np.zeros(xkm1.shape[0]-1))[-1]
             _, y_bands = self.get_state_estimation(y_tmp, y_w) # Get the 90% CI of the estimation.
             interval_width = y_bands[1]-y_bands[0]
             # A outlier is defined as exceeding 1.5 interval_width from the upper and lower bound.
-            if (yk > y_mean+5*interval_width) | (yk < y_mean-5*interval_width):
+            margin = 1
+            if (yk > y_mean+margin*interval_width) | (yk < y_mean-margin*interval_width):
                 if self.outlier_quota == 1:
                     # print(f'Reinitiate the particles: k={k}')
                     xk = self.gen_x0(Ns, t[k])
@@ -127,7 +132,7 @@ class pf_class:
                 else:
                     # print(f'Smoothing due to outlier: k={k}')
                     for i in range(Ns):
-                        xk[:, i] = self.sys(t[k], t[k-1], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
+                        xk[:, i] = self.sys(t[k], xkm1[:, i], np.zeros(xkm1.shape[0]-1))
                     wk = wkm1
                     self.outlier_quota -= 1                    
             else:
@@ -190,7 +195,7 @@ class pf_class:
         return xk, wk
 
 
-    def rul_prediction(self, threshold, idx_pred, t_pred, max_ite=70, max_RUL=145, alpha = .1):
+    def rul_prediction(self, threshold, idx_pred, t, max_RUL=145, alpha = .1):
         '''
         This function predicts the RUL based on the result of the PF.
 
@@ -204,8 +209,6 @@ class pf_class:
             For example, t_pred = [10, 20, 30, \cdots, 100], and you have measurement data for the first three points $10, 20$ and $30$.
             If you wish to predict RUL at these three time instants, then you should set idx_pred = [0, 1, 2]. By doing so, three seperate RUL predictions will be performed. Each prediction will only use the degradation 
             measurements before it.
-        - max_ite: Maximun time steps in the RUL prediction. We only extroplolate up to max_ite steps. If beyond this, the degradation still does not fall below threshold, we end the search and set RUL = max_RUL.
-            The default value is $70$.
         - max_RUL: When the search for RUL ends without finding the failure time, we set the RUL = max_RUL. Default value is $145$.
         - alpha: Confidence level for calculating the confidence interval. Default value is .1.
 
@@ -214,6 +217,8 @@ class pf_class:
         - rul_bands: An ndarry containting the upper and lower CI for the mean RUL. Shape: (n_pred, 2)
         - rul: An ndarray containing the predicted RULs for all the particles. Shape (Ns, n_pred) where Ns is the number of particles.
         - rul_weights: An ndarry containing the weights for the predicted RULs. Shape (Ns, n_pred).
+        - deg_pred_mean: A list of n_pred element. Each element is the predicted degradation path at a given prediction point.
+        - deg_pred_bands: The CI of the previous variable.
         '''
         # Initialize the variables.
         n_pred = len(idx_pred)
@@ -222,37 +227,45 @@ class pf_class:
         rul_bands = np.zeros((n_pred, 2))
         rul_weights = np.zeros((self.Ns, n_pred))
 
+        deg_pred_mean = []
+        deg_pred_bands = []
+
         # Do a loop to make RUL predictions:
         for i in tqdm(range(n_pred)):
             idx_pred_i = idx_pred[i] # Index of the prediction instant.
             rul_weights[:, i] = self.w[:, idx_pred_i] # Get the weights. 
-
-            # Degradation state estimation:
-            x_h = np.matmul(self.particles[:, :, idx_pred_i], self.w[:, idx_pred_i])
-            # For each particle, repeat the state space model until we find failure or max_ite is reached.
+           
+            # For each particle, use the degradation model to calculate the RUL.
             for j in range(self.Ns):
-                counter = 1 # This is the step we extropolate into the future.
                 x_cur = self.particles[:, j, idx_pred_i] # Get the current particles.
-                x_cur[-1] = x_h[-1] # Make all the particles starts from the same degradation state estimation.
-                # Repeatedly moving one step forward.
-                while counter <= max_ite:
-                    # Predict the future degradation.
-                    # x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, self.gen_sys_noise()) # State equation.
-                    # We do not consider state noise in the rul prediction.
-                    x_pred = self.sys(t_pred[idx_pred_i+counter], t_pred[idx_pred_i+counter-1], x_cur, np.zeros_like(x_cur)) # State equation.
-                    y_pred = self.obs(x_pred, 0) # Observation equation.
-                    # Find failure time.
-                    if y_pred < threshold: # If a failure is found.
-                        rul[j, i] = t_pred[idx_pred_i+counter] - t_pred[idx_pred_i]
-                        break
-                    else: # Otherwise we move one step forward.
-                        x_cur = x_pred
-                        counter += 1
-
+                # Define a equation: Degration(t)=0, and solve for t.
+                hdl_eq = lambda tt: self.degradation_path(x_cur, tt) - threshold
+                ttf_run = fsolve(hdl_eq, t[idx_pred_i])
+                # Get RUL.
+                rul[j, i] = math.floor(ttf_run) + 1 - t[idx_pred_i]
+                if rul[j, i] > max_RUL:
+                    rul[j, i] = max_RUL
+                elif rul[j, i] < 0:
+                    rul[j, i] = 0        
             # Calculate the mean and CI for the predicted RUL.
-            rul_mean[i], rul_bands[i, :] = self.get_state_estimation(rul[:, i], rul_weights[:, i], alpha=alpha) 
+            rul_mean[i], rul_bands[i, :] = self.get_state_estimation(rul[:, i], rul_weights[:, i], alpha=alpha)
+
+            # Degradation state prediction:
+            n_t = math.floor(rul_mean[i]) + 10
+            deg_pred = np.zeros((self.Ns, n_t))
+            for j in range(self.Ns):
+                x_cur = self.particles[:, j, idx_pred_i] # Get the current particles.
+                tt = np.arange(t[idx_pred_i]+1, t[idx_pred_i]+1+n_t)
+                deg_pred[j, :] = self.degradation_path(x_cur, tt)
+            # Get the mean and bands of the degradation prediction.
+            deg_mean = np.zeros(n_t)
+            deg_bands = np.zeros((n_t, 2))
+            for j in range(n_t):
+                deg_mean[j], deg_bands[j, :] = self.get_state_estimation(deg_pred[:, j], rul_weights[:, i], alpha=alpha)
+            deg_pred_mean.append(deg_mean)
+            deg_pred_bands.append(deg_bands)
             
-        return rul_mean, rul_bands, rul, rul_weights
+        return rul_mean, rul_bands, rul, rul_weights, deg_pred_mean, deg_pred_bands
 
 
     def get_state_estimation(self, x_sample, weights, alpha=.1):
@@ -291,22 +304,19 @@ if __name__ == '__main__':
     # Process equation x[k] = sys(k, x[k-1], u[k]):
     nx = 5  # number of states
     nu = 4  # size of the vector of process noise
-    sigma_u = 1*np.array([1e-2, 1e-6, 1e-5, 1e-6])
-    # sigma_u = 1e-1*np.array([1e-5, 1e-6, 1e-6, 1e-5])
+    # sigma_u = 1*np.array([1e-2, 1e-6, 1e-5, 1e-6])
+    sigma_u = 1*np.array([1e-5, 1e-6, 1e-5, 1e-6])
     # Degradation model.
     def degradation_path(x, t):
         return x[0] * np.exp(x[1] * t) + x[2] * np.exp(x[3] * t)    
-    # Degradation increments, calculated based on the degradation model.
-    def degradation_incr(xk, tk, tkm1):
-        return degradation_path(xk, tk) - degradation_path(xk, tkm1)
     # Process model.
-    def sys(tk, tkm1, xkm1, uk):
+    def sys(tk, xkm1, uk):
         xk = np.zeros(nx)
         xk[0] = xkm1[0] + uk[0]
         xk[1] = xkm1[1] + uk[1]
         xk[2] = xkm1[2] + uk[2]
         xk[3] = xkm1[3] + uk[3]
-        xk[4] = xkm1[4] + degradation_incr(xk, tk, tkm1)
+        xk[4] = degradation_path(np.array([xk[0], xk[1], xk[2], xk[3]]), tk)
         return xk
     # Generate system noise.
     def gen_sys_noise(Ns=1):
@@ -340,13 +350,13 @@ if __name__ == '__main__':
     t = np.arange(1, 140+1, 1) # The observation times.
     T = len(t) # Number of time steps
     # Generating the initial particles.
-    def gen_x0(Ns=1):
+    def gen_x0(Ns=1, t_0=t[0]):
         x0 = np.zeros((nx, Ns))
         x0[0, :] = np.random.uniform(.88, .89, size=Ns)
         x0[1, :] = np.random.uniform(-9e-4, -8e-4, size=Ns)
         x0[2, :] = np.random.uniform(-3e-4, -2e-4, size=Ns)
         x0[3, :] = np.random.uniform(.03, .05, size=Ns)
-        x0[4, :] = x0[0, :] * np.exp(x0[1, :] * t[0]) + x0[2, :] * np.exp(x0[3, :] * t[0])
+        x0[4, :] = degradation_path(np.array([x0[0], x0[1], x0[2], x0[3]]), t_0)
         return x0
     # Observation likelihood.
     def p_yk_given_xk(yk, xk):
@@ -371,7 +381,7 @@ if __name__ == '__main__':
     for k in range(1, T):
         u[:, k] = gen_sys_noise()
         v[:, k] = gen_obs_noise()
-        x[:, k] = sys(t[k], t[k-1], x[:, k-1], u[:, k])
+        x[:, k] = sys(t[k], x[:, k-1], u[:, k])
         y[:, k] = obs(x[:, k], v[:, k])
     # Get the true degradation.
     for k in range(T):
@@ -383,7 +393,8 @@ if __name__ == '__main__':
     # Create a particle filter object.
     pf = pf_class(
         Ns=int(1e3), t=t, nx=nx, gen_x0=gen_x0, sys=sys, obs=obs,
-        p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise
+        p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise,
+        degradation_path=degradation_path
     )
     # Do the filtering:
     for k in range(1, T):
@@ -412,26 +423,22 @@ if __name__ == '__main__':
 
     # RUL prediction.
     threshold = .7 # Failure threshold.
-    max_ite = 100 # Maximun number of prediction states.
     max_RUL = 100 # RUL when not failure found.
     idx_pred = np.arange(30, 140, 10) # Index of the prediction instants.
-    # Create the time.
-    t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
-    t_pred = np.concatenate((t, t_pred))
     # Run the RUL prediction.
-    rul_mean, rul_bands, rul, rul_weights = pf.rul_prediction(threshold, idx_pred, t_pred, max_ite=max_ite, max_RUL=max_RUL)
+    rul_mean, rul_bands, rul, rul_weights, _, _ = pf.rul_prediction(threshold, idx_pred, t, max_RUL=max_RUL)
     
     # Visualize the result.
     fig, ax = plt.subplots()
-    ax.plot(t_pred[idx_pred], rul_mean, '-ko', label='RUL prediction')
-    ax.fill_between(t_pred[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
+    ax.plot(t[idx_pred], rul_mean, '-ko', label='RUL prediction')
+    ax.fill_between(t[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
     # Get the true TTF.
     true_ttf = 140
     for i in range(T):
         if yReal[0, i] < threshold:
             true_ttf = t[i]
             break
-    ax.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', label='True RUL')
+    ax.plot(t[idx_pred], (true_ttf-t[idx_pred])*(true_ttf-t[idx_pred]>=0), '--r', label='True RUL')
     ax.legend()
     ax.set_xlabel('t')
     ax.set_ylabel('RUL')
@@ -441,7 +448,7 @@ if __name__ == '__main__':
     fig.set_size_inches(16, 6)
     ax = fig.add_subplot(projection='3d')
     # Set the x and y data for the plot
-    xi = t_pred[idx_pred]
+    xi = t[idx_pred]
     yi = np.linspace(0, 180, 1000)
     xx, yy = np.meshgrid(xi, yi)
     den = np.zeros_like(xx)
@@ -459,8 +466,8 @@ if __name__ == '__main__':
 
     # Show the plot
     ax.set_zlim(0, .1)
-    ax.plot(t_pred[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
-    ax.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
+    ax.plot(t[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
+    ax.plot(t[idx_pred], (true_ttf-t[idx_pred])*(true_ttf-t[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
     ax.legend()
     ax.set_xlabel('$t$')
     ax.set_ylabel('RUL')
