@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from utility import load_data
 import pickle
 from utility import drop_outlier_sw
 from utility import cal_ttf
@@ -71,10 +70,10 @@ def create_mdl(sigma_u, sigma_v):
     def p_yk_given_xk(yk, xk):
         return p_obs_noise(yk - obs(xk, 0))
 
-    return nx, ny, sys, obs, p_yk_given_xk, gen_sys_noise
+    return nx, ny, sys, obs, degradation_path, p_yk_given_xk, gen_sys_noise
 
 
-def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL):
+def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, max_RUL, n_plt=5):
     '''
     This function run the PF for the data from a given battery and predict its RUL.
 
@@ -87,7 +86,6 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     - threshold: Degradation threshold.
     - idx_pred: Index of the time instants that needs to predict RUL.
     - t_pred: A vector of all the time instants, including the observation data, and the time horizon until max_ite.
-    - max_ite: Maximum number of iterations when searching for failure.
     - max_RUL: If max_ite is reached, set the RUL to max_RUL.
 
     Outputs:
@@ -100,7 +98,7 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     - rul_weights: Weights of the rul predicitons of all the particles.
     '''
     # Create the state space model.
-    nx, ny, sys, obs, p_yk_given_xk, gen_sys_noise = create_mdl(sigma_u, sigma_v)
+    nx, ny, sys, obs, degradation_path, p_yk_given_xk, gen_sys_noise = create_mdl(sigma_u, sigma_v)
 
     # Prepare particle filter.       
     # Generating the initial particles.
@@ -110,14 +108,14 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
         x0[1, :] = np.random.uniform(-1e-4, -2e-5, size=Ns)
         x0[2, :] = np.random.uniform(-2e-3, -1e-3, size=Ns)
         x0[3, :] = np.random.uniform(.005, .01, size=Ns)
-        x0[4, :] = x0[0, :] * np.exp(x0[1, :] * t_0) + x0[2, :] * np.exp(x0[3, :] * t_0)
+        x0[4, :] = degradation_path(x0, t_0)
         return x0
 
     # Create a particle filter object.
     pf = pf_class(
         Ns=int(Ns), t=t, nx=nx, gen_x0=gen_x0, sys=sys, obs=obs,
         p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise,
-        initial_outlier_quota=3
+        initial_outlier_quota=3, degradation_path=degradation_path
     )
     # Do the filtering:
     T = len(t) # Number of time steps
@@ -138,39 +136,35 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
 
     # RUL prediction.
     # Run the RUL prediction.
-    rul_mean, rul_bands, rul, rul_weights = pf.rul_prediction(threshold, idx_pred, t_pred, max_ite=max_ite, max_RUL=max_RUL)    
+    rul_mean, rul_bands, rul, rul_weights, deg_mean, deg_bands = pf.rul_prediction(threshold, idx_pred, t, max_RUL=max_RUL)    
 
-    # Plot the degradation.
-    ax1 = plt.subplot()
-    ax1.plot(t, y, 'bo', label='Measurement')
-    ax1.plot(t, threshold*np.ones_like(t), 'r--', label='Failure threshold')
-    ax1.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
-    ax1.plot(t[1:], yh.reshape(-1)[1:], 'k+-', label='PF estimation')
-    ax1.fill_between(t[1:], y_bands[0, 1:], y_bands[1, 1:], color='blue', alpha=.25, label='90% Confidence interval')
-    ax1.set_xlabel('t')
-    ax1.set_ylabel('Capacity (Ah)')
-    ax1.legend()
-    plt.show()
+    # Create five Figures of the predicted degradation trajectories.
+    idx_plt = np.linspace(0, len(idx_pred)-1, n_plt, dtype=int)
+    for i in range(n_plt):
+        ax1b = plt.subplot()
+        idx_start = idx_pred[idx_plt[i]]
+        deg_pred = deg_mean[idx_plt[i]]
+        deg_pred_bands = deg_bands[idx_plt[i]]
 
-    # Zoom in the predicted range.
-    ax1b = plt.subplot()
-    ax1b.plot(t[idx_pred], y[idx_pred], 'bo', label='Measurement')
-    ax1b.plot(t[idx_pred], threshold*np.ones_like(t[idx_pred]), 'r--', label='Failure threshold')
-    ax1b.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
-    ax1b.plot(t[idx_pred], yh.reshape(-1)[idx_pred], 'k+-', label='PF estimation')
-    ax1b.fill_between(t[idx_pred], y_bands[0, idx_pred], y_bands[1, idx_pred], color='blue', alpha=.25, label='90% Confidence interval')
-    ax1b.set_xlabel('t')
-    ax1b.set_ylabel('Capacity (Ah)')
-    ax1b.set_ylim(threshold-.02)
-    ax1b.legend()
-    plt.show()
+        ax1b.plot(t, y, 'b-', label='Measurement')
+        ax1b.plot(t[idx_start]+np.arange(1, len(deg_pred)+1, 1), deg_pred, 'k--', label='Degradation prediction')
+        ax1b.plot(t[1:idx_start], yh.reshape(-1)[1:idx_start], 'k-', label='Degradation estimation')
+        ax1b.fill_between(t[1:idx_start], y_bands[0, 1:idx_start], y_bands[1, 1:idx_start], color='blue', alpha=.25)
+        ax1b.fill_between(t[idx_start]+np.arange(1, len(deg_pred)+1, 1), deg_pred_bands[:, 0], deg_pred_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
+        ax1b.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
+        ax1b.plot(np.linspace(0, t[idx_start]+len(deg_pred)+1, 20), threshold*np.ones(20), 'r--', label='Failure threshold')
+        ax1b.plot(t[idx_start]*np.ones(6), np.arange(.6, 1.2, .1), '--k')
+        ax1b.legend()
+        ax1b.set_xlabel('t')
+        ax1b.set_ylabel('Capacity (Ah)')
+        plt.show()    
 
     # RUL.
     true_ttf = t[idx_ttf]
     ax2 = plt.subplot()
-    ax2.plot(t_pred[idx_pred], rul_mean, '-ko', label='RUL prediction')
-    ax2.fill_between(t_pred[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
-    ax2.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', label='True RUL')
+    ax2.plot(t[idx_pred], rul_mean, '-ko', label='RUL prediction')
+    ax2.fill_between(t[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
+    ax2.plot(t[idx_pred], (true_ttf-t[idx_pred])*(true_ttf-t[idx_pred]>=0), '--r', label='True RUL')
     ax2.legend()
     ax2.set_xlabel('t')
     ax2.set_ylabel('RUL')
@@ -181,7 +175,7 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     fig.set_size_inches(20, 6)
     ax3 = fig.add_subplot(projection='3d')
     # Set the x and y data for the plot
-    xi = t_pred[idx_pred]
+    xi = t[idx_pred]
     yi = np.linspace(0, max_RUL, 1000)
     xx, yy = np.meshgrid(xi, yi)
     den = np.zeros_like(xx)
@@ -198,8 +192,8 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
             continue
     # Show the plot
     ax3.set_zlim(0, .1)
-    ax3.plot(t_pred[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
-    ax3.plot(t_pred[idx_pred], (true_ttf-t_pred[idx_pred])*(true_ttf-t_pred[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
+    ax3.plot(t[idx_pred], rul_mean, '-ko', zs=0, zdir='z', label='RUL prediction')
+    ax3.plot(t[idx_pred], (true_ttf-t[idx_pred])*(true_ttf-t[idx_pred]>=0), '--r', zs=0, zdir='z', label='True RUL')
     ax3.legend()
     ax3.set_xlabel('$t$')
     ax3.set_ylabel('RUL')
@@ -223,14 +217,14 @@ if __name__ == '__main__':
     # Get the time and degradation measurement. Perform filtering.
     t = battery['cycle']
     y = battery['discharging capacity']
-    # t = np.array(t)
-    # y = np.array(y)
+    t = np.array(t)
+    y = np.array(y)
 
-    # We can try also eliminate the outliers explicitly:
-    rolling_window = 20
-    idx = drop_outlier_sw(y, rolling_window)
-    t = np.array(t[idx])
-    y = np.array(y[idx])
+    # # We can try also eliminate the outliers explicitly:
+    # rolling_window = 20
+    # idx = drop_outlier_sw(y, rolling_window)
+    # t = np.array(t[idx])
+    # y = np.array(y[idx])
 
     # Calculate true TTF.
     threshold = .7*1.1
@@ -245,16 +239,12 @@ if __name__ == '__main__':
     sigma_v = 1e-2
     Ns = 1e3
     # For the RUL prediction.
-    max_ite = 200 # Maximun number of prediction states.
-    max_RUL = 200 # RUL when not failure found.
-    idx_start = 200
+    max_RUL = 600 # RUL when not failure found.
+    idx_start = 300
     step = 10
     idx_pred = np.arange(idx_ttf-idx_start, idx_ttf+step, step, dtype=int) # Index of the prediction instants.
-    # Create the time.
-    t_pred = np.arange(t[-1]+1, t[-1] + max_ite + 1, 1) 
-    t_pred = np.concatenate((t, t_pred))
     
-    xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, t_pred, max_ite, max_RUL)
+    xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf = individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_pred, max_RUL, n_plt=10)
 
     # # Save the result.
     # file_name = 'result_' + name + '.pickle'
