@@ -138,29 +138,67 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     # Run the RUL prediction.
     rul_mean, rul_bands, rul, rul_weights, deg_mean, deg_bands = pf.rul_prediction(threshold, idx_pred, t, max_RUL=max_RUL)    
 
-    # Create five Figures of the predicted degradation trajectories.
+    # Visulize the results.
+    # Create n_plt Figures of the predicted degradation trajectories.
     idx_plt = np.linspace(0, len(idx_pred)-1, n_plt, dtype=int)
     for i in range(n_plt):
-        ax1b = plt.subplot()
-        idx_start = idx_pred[idx_plt[i]]
+        idx_pred_start = idx_pred[idx_plt[i]]
         deg_pred = deg_mean[idx_plt[i]]
         deg_pred_bands = deg_bands[idx_plt[i]]
-
-        ax1b.plot(t, y, 'b-', label='Measurement')
-        ax1b.plot(t[idx_start]+np.arange(1, len(deg_pred)+1, 1), deg_pred, 'k--', label='Degradation prediction')
-        ax1b.plot(t[1:idx_start], yh.reshape(-1)[1:idx_start], 'k-', label='Degradation estimation')
-        ax1b.fill_between(t[1:idx_start], y_bands[0, 1:idx_start], y_bands[1, 1:idx_start], color='blue', alpha=.25)
-        ax1b.fill_between(t[idx_start]+np.arange(1, len(deg_pred)+1, 1), deg_pred_bands[:, 0], deg_pred_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
-        ax1b.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
-        ax1b.plot(np.linspace(0, t[idx_start]+len(deg_pred)+1, 20), threshold*np.ones(20), 'r--', label='Failure threshold')
-        ax1b.plot(t[idx_start]*np.ones(6), np.arange(.6, 1.2, .1), '--k')
-        ax1b.legend()
-        ax1b.set_xlabel('t')
-        ax1b.set_ylabel('Capacity (Ah)')
-        plt.show()    
-
+        plot_deg_pred(t, y, threshold, idx_ttf, yh, y_bands, idx_pred_start, deg_pred, deg_pred_bands)    
     # RUL.
     true_ttf = t[idx_ttf]
+    plot_rul_t(t, true_ttf, idx_pred, rul_mean, rul_bands)
+    # 3d plot of the predicted RULs.
+    plot_rul_density(t, idx_pred, max_RUL, rul_mean, rul, rul_weights, true_ttf)
+
+    return xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf
+
+
+def plot_deg_pred(t, y, threshold, idx_ttf, yh, y_bands, idx_pred_start, deg_pred, deg_pred_bands):
+    '''
+    Create a plot for the estimated degradation + predicted prediction.
+
+    Args:
+    - t: An array of measurement times.
+    - y: An array of measured degradation.
+    - threshold: Failure threshold.
+    - idx_ttf: Index of true time to failure.
+    - yh: Estimated degradation.
+    - y_bands: CI of yh.
+    - idx_pred_start: Index of the start of RUL prediction.
+    - deg_pred: An array of predicted degradation.
+    - deg_pred_bands: CI of deg_pred.
+
+    Output: None.
+    '''
+    ax1b = plt.subplot()
+    ax1b.plot(t, y, 'b-', label='Measurement')
+    ax1b.plot(t[idx_pred_start]+np.arange(1, len(deg_pred)+1, 1), deg_pred, 'k--', label='Degradation prediction')
+    ax1b.plot(t[1:idx_pred_start], yh.reshape(-1)[1:idx_pred_start], 'k-', label='Degradation estimation')
+    ax1b.fill_between(t[1:idx_pred_start], y_bands[0, 1:idx_pred_start], y_bands[1, 1:idx_pred_start], color='blue', alpha=.25)
+    ax1b.fill_between(t[idx_pred_start]+np.arange(1, len(deg_pred)+1, 1), deg_pred_bands[:, 0], deg_pred_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
+    ax1b.plot(t[idx_ttf], y[idx_ttf], 'rx', label='Time to failure')
+    ax1b.plot(np.linspace(0, t[idx_pred_start]+len(deg_pred)+1, 20), threshold*np.ones(20), 'r--', label='Failure threshold')
+    ax1b.plot(t[idx_pred_start]*np.ones(6), np.arange(.6, 1.2, .1), '--k')
+    ax1b.legend()
+    ax1b.set_xlabel('t')
+    ax1b.set_ylabel('Capacity (Ah)')
+    plt.show()
+
+
+def plot_rul_t(t, true_ttf, idx_pred, rul_mean, rul_bands):
+    '''
+    Create a plot of predicted RUL(t) V.S. t.
+
+    Args:
+    - t: An array of measurement times.
+    - true_TTF: True time to failure.
+    - idx_pred: An array containing the indexes of the RUL prediction moments.
+    - rul_mean, rul_bands: The predicted RUL and its CI>
+
+    Outputs: None.
+    '''
     ax2 = plt.subplot()
     ax2.plot(t[idx_pred], rul_mean, '-ko', label='RUL prediction')
     ax2.fill_between(t[idx_pred], rul_bands[:, 0], rul_bands[:, 1], color='blue', alpha=.25, label='90% Confidence interval')
@@ -170,14 +208,27 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     ax2.set_ylabel('RUL')
     plt.show()
 
-    # 3d plot of the predicted RULs.
+
+def plot_rul_density(t, idx_pred, max_RUL, rul_mean, rul, rul_weights, true_ttf):
+    ''' 
+    This function plots the density of the predicted RUL at different time.
+    
+    Args:
+    - t: An array of measurement times.
+    - idx_pred: An array containing the indexes of the RUL prediction moments.
+    - max_RUL: Maximal value of RUL search. If true RUL>this value, it will be set to this value.
+    - rul_mean: Predicted RUL (mean)
+    - rul: Predicted RUL (all samples)
+    - rul_weights: The weights of the rul
+    - true_ttf: True time to failure.
+    '''
     fig = plt.figure()
     fig.set_size_inches(20, 6)
     ax3 = fig.add_subplot(projection='3d')
     # Set the x and y data for the plot
     xi = t[idx_pred]
     yi = np.linspace(0, max_RUL, 1000)
-    xx, yy = np.meshgrid(xi, yi)
+    xx, _ = np.meshgrid(xi, yi)
     den = np.zeros_like(xx)
     # Plot.
     for i in range(len(idx_pred)):
@@ -199,8 +250,6 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     ax3.set_ylabel('RUL')
     ax3.set_zlabel('Density')
     plt.show()
-
-    return xh, yh, y_bands, rul_mean, rul_bands, rul, rul_weights, pf
 
 
 # Here we test the PF on real data from Calce..
