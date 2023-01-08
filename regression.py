@@ -10,7 +10,7 @@ from rul_calce_data import plot_deg_pred, plot_rul_t, plot_rul_density
 from scipy.stats import truncnorm
 
 
-def rul_battery_reg(t, y):
+def rul_battery_reg(t, y, name):
     '''
     This function predicts the RUL basead on degradation measurements y, and plot the results.
 
@@ -33,7 +33,7 @@ def rul_battery_reg(t, y):
     step = 10
     idx_pred = np.arange(idx_ttf-idx_start, idx_ttf+step, step, dtype=int) # Index of the prediction instants.
     n_pred = len(idx_pred)
-    Ns = int(1e3)    
+    n_bs = int(1e3) # Boostrap samples used to calculate the CI.
 
     # Define the degradation model.
     def degradation_mdl(t, x_0, x_1, x_2, x_3):
@@ -42,7 +42,7 @@ def rul_battery_reg(t, y):
 
     # Assign memory.
     # RUL predictions.
-    rul = max_RUL*np.ones((Ns, n_pred))
+    rul = max_RUL*np.ones((n_bs, n_pred))
     rul_mean = np.zeros(n_pred)
     rul_bands = np.zeros((n_pred, 2))
     # Estimated degradation.
@@ -61,10 +61,10 @@ def rul_battery_reg(t, y):
         # Estimate model parameters.
         t_data = t[:idx_pred_i+1]
         y_data = y[:idx_pred_i+1]
-        x_hat, x_sample = degradation_est(t, T, degradation_mdl, n_x, Ns, deg_est_mean, deg_est_bands, x0, bounds, t_data, y_data)        
+        x_hat, x_sample = degradation_est(degradation_mdl, n_x, n_bs, deg_est_mean, deg_est_bands, x0, bounds, t_data, y_data)        
 
         # For each sample, make RUL prediction.
-        for k in range(Ns):
+        for k in range(n_bs):
             x_run = x_sample[:, k]
             hdl_eq = lambda xx: degradation_mdl(xx, x_run[0], x_run[1], x_run[2], x_run[3])-threshold                        
             ttf_run = scipy.optimize.fsolve(hdl_eq, t[idx_pred_i])
@@ -74,7 +74,7 @@ def rul_battery_reg(t, y):
             elif rul[k, i] < 0:
                 rul[k, i] = 0        
         tmp_rul = rul[:, i]
-        _, rul_bands[i, :] = get_state_estimation(tmp_rul, 1/Ns*np.ones_like(tmp_rul))
+        _, rul_bands[i, :] = get_state_estimation(tmp_rul, 1/n_bs*np.ones_like(tmp_rul))
         hdl_eq = lambda xx: degradation_mdl(xx, x_hat[0], x_hat[1], x_hat[2], x_hat[3])-threshold
         rul_mean[i] = scipy.optimize.fsolve(hdl_eq, t[idx_pred_i]) + 1 - t[idx_pred_i]
         if rul_mean[i] < 0:
@@ -82,8 +82,8 @@ def rul_battery_reg(t, y):
 
         # Degradation state prediction:
         n_t = math.floor(rul_mean[i]) + 10
-        deg_pred = np.zeros((Ns, n_t))
-        for j in range(Ns):
+        deg_pred = np.zeros((n_bs, n_t))
+        for j in range(n_bs):
             x_cur = x_sample[:, j] # Get the current particles.
             tt = np.arange(t[idx_pred_i]+1, t[idx_pred_i]+1+n_t)
             deg_pred[j, :] = degradation_mdl(tt, x_cur[0], x_cur[1], x_cur[2], x_cur[3])
@@ -91,7 +91,7 @@ def rul_battery_reg(t, y):
         deg_mean = np.zeros(n_t)
         deg_bands = np.zeros((n_t, 2))
         for j in range(n_t):
-            _, deg_bands[j, :] = get_state_estimation(deg_pred[:, j], 1/Ns*np.ones(Ns))
+            _, deg_bands[j, :] = get_state_estimation(deg_pred[:, j], 1/n_bs*np.ones(n_bs))
         deg_mean = degradation_mdl(tt, x_hat[0], x_hat[1], x_hat[2], x_hat[3])
         deg_bands[deg_bands<.6] = .6
         deg_bands[deg_bands>1.2] = 1.2
@@ -118,35 +118,59 @@ def rul_battery_reg(t, y):
     true_ttf = t[idx_ttf]
     plot_rul_t(t, true_ttf, idx_pred, rul_mean, rul_bands)
     # 3d plot of the predicted RULs.
-    plot_rul_density(t, idx_pred, max_RUL, rul_mean, rul, 1/Ns*np.ones_like(rul), true_ttf) 
+    plot_rul_density(t, idx_pred, max_RUL, rul_mean, rul, 1/n_bs*np.ones_like(rul), true_ttf)
+
+    # Save the result.
+    file_name = 'result_reg_' + name + '.pickle'
+    with open(file_name, 'wb') as f:
+        pickle.dump([t, y, threshold, idx_ttf, idx_pred, true_ttf, max_RUL, 
+            x_hat, yh, y_bands, rul_mean, rul_bands, rul, x_sample
+        ], f, protocol=pickle.HIGHEST_PROTOCOL) 
 
 
-def degradation_est(t, T, degradation_mdl, n_x, Ns, deg_est_mean, deg_est_bands, x0, bounds, t_data, y_data):
-    popt, pcov = curve_fit(degradation_mdl, 
+def degradation_est(degradation_mdl, n_x, n_bs, deg_est_mean, deg_est_bands, x0, bounds, t_data, y_data):
+    '''
+    Estimate the parameter of the degradation model given data t_data, y_data. Use bootstrap sampling to caculate the CI.
+
+    Args:
+    - t, 
+    - T: Number of 
+    - degradation_mdl: Function handle to the degradation model.
+    - n_x: Number of parameters in the degradation model.
+    - n_bs: Bootstrap sample size.
+    - deg_est_mean: A list containing the point estimate of the degradation estimation.
+    - deg_est_bands: A list containing the CIs of the degradation estimation.
+    - x0: Initial value of the search.
+    - bounds: Bounds of the model parameters.
+    - t_data: Time of the observation data.
+    - y_data: Observation data.
+    '''
+    # Point estimator.
+    x_hat, _ = curve_fit(degradation_mdl, 
         xdata=t_data, ydata=y_data, p0=x0, bounds=bounds)
-        # Genearate samples to represent the uncertainty in estimation.
-    x_hat = popt
-    std_x = np.sqrt(np.diag(pcov))
-    x_sample = np.zeros((n_x, Ns))
-    for k in range(n_x):
-        myclip_a, myclip_b = bounds[0][k], bounds[1][k]
-        loc = x_hat[k]
-        scale = std_x[k]
-        end_point = max((loc-myclip_a)/scale, (myclip_b-loc)/scale)            
-        x_sample[k, :] = truncnorm.rvs(loc=loc, scale=scale, a=-1*end_point, b=end_point, size=Ns)
-        
-        # Estimate degradation before the prediction point.
-        # Reserve memory.
-    yh = np.zeros(T)
-    y_bands = np.zeros((2, T))
-    y_sample = np.zeros((Ns, T))
+
+    # Construct CI using bootstrap method.
+    n_measurement = len(y_data)
+    idx_bs = np.random.choice(np.arange(0, n_measurement, 1), size=(n_bs, n_measurement))
+    x_sample = np.zeros((n_x, n_bs))
+    for i in range(n_bs):
+        idx_i = idx_bs[i, :]
+        t_bs = t_data[idx_i]
+        y_bs = y_data[idx_i]
+        x_sample[:, i], _ = curve_fit(degradation_mdl, xdata=t_bs, ydata=y_bs, p0=x0, bounds=bounds)
+
+    # Estimate degradation before the prediction point.
+    # Reserve memory.
+    yh = np.zeros(n_measurement)
+    y_bands = np.zeros((2, n_measurement))
+    y_sample = np.zeros((n_bs, n_measurement))
         # Degradation state estimation:
-    for k in range(Ns):
+    for k in range(n_bs):
         x_run = x_sample[:, k]
-        y_sample[k, :] = degradation_mdl(t, x_run[0], x_run[1], x_run[2], x_run[3])
-    for j in range(T):
-        _, y_bands[:, j] = get_state_estimation(y_sample[:, j], 1/Ns*np.ones(Ns))
-    yh = degradation_mdl(t, x_hat[0], x_hat[1], x_hat[2], x_hat[3])
+        y_sample[k, :] = degradation_mdl(t_data, x_run[0], x_run[1], x_run[2], x_run[3])
+    for j in range(n_measurement):
+        _, y_bands[:, j] = get_state_estimation(y_sample[:, j], 1/n_bs*np.ones(n_bs))
+    yh = degradation_mdl(t_data, x_hat[0], x_hat[1], x_hat[2], x_hat[3])
     deg_est_mean.append(yh)
     y_bands[y_bands<.6] = .6
     y_bands[y_bands>1.2] = 1.2
