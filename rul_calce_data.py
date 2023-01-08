@@ -105,9 +105,11 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     def gen_x0(Ns=1, t_0=t[0]):
         x0 = np.zeros((nx, Ns))
         x0[0, :] = np.random.uniform(1, 1.2, size=Ns)
-        x0[1, :] = np.random.uniform(-1e-4, -2e-5, size=Ns)
-        x0[2, :] = np.random.uniform(-2e-3, -1e-3, size=Ns)
-        x0[3, :] = np.random.uniform(.005, .01, size=Ns)
+        x0[1, :] = np.random.uniform(-1e-3, -2e-5, size=Ns)
+        x0[2, :] = np.random.uniform(-2e-2, -1e-3, size=Ns)
+        # x0[1, :] = np.random.uniform(-1e-3, 0, size=Ns)
+        # x0[2, :] = np.random.uniform(-2e-1, 0, size=Ns)
+        x0[3, :] = np.random.uniform(.001, .01, size=Ns)
         x0[4, :] = degradation_path(x0, t_0)
         return x0
 
@@ -115,7 +117,7 @@ def individual_battery_run(t, y, sigma_u, sigma_v, Ns, threshold, idx_ttf, idx_p
     pf = pf_class(
         Ns=int(Ns), t=t, nx=nx, gen_x0=gen_x0, sys=sys, obs=obs,
         p_yk_given_xk=p_yk_given_xk, gen_sys_noise=gen_sys_noise,
-        initial_outlier_quota=3, degradation_path=degradation_path
+        initial_outlier_quota=5, degradation_path=degradation_path
     )
     # Do the filtering:
     T = len(t) # Number of time steps
@@ -254,13 +256,19 @@ def plot_rul_density(t, idx_pred, max_RUL, rul_mean, rul, rul_weights, true_ttf)
 
 # Here we test the PF on real data from Calce..
 if __name__ == '__main__':
+    # # Run particle filtering to estimate the state variables.
+    # battery_list = ['CS2_35', 'CS2_36', 'CS2_37', 'CS2_38']
+    # # Directly read from the archived data.
+    # with open('data_all.pickle', 'rb') as f:
+    #     data_all = pickle.load(f)
+
     # Run particle filtering to estimate the state variables.
-    battery_list = ['CS2_35', 'CS2_36', 'CS2_37', 'CS2_38']
+    battery_list = ['CS2_33', 'CS2_34']
     # Directly read from the archived data.
-    with open('data_all.pickle', 'rb') as f:
+    with open('data_all_halfC.pickle', 'rb') as f:
         data_all = pickle.load(f)
 
-    name = battery_list[3]
+    name = battery_list[1]
     battery = data_all[name]
     battery.fillna(method='ffill', inplace=True)
     # Get the time and degradation measurement. Perform filtering.
